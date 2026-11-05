@@ -1,4 +1,6 @@
 import './style.css'
+import { sb } from './supabase.js'
+import { SUPABASE_URL } from './config.js'
 
 const API = 'https://api.tcgdex.net/v2'
 const KEY = 'pokebinder-v2'
@@ -8,33 +10,42 @@ const LANGS = [
 ]
 const $app = document.getElementById('app')
 const BASE = import.meta.env.BASE_URL
-const imgOf = it => (it.src ? BASE + it.src : `${it.image}/low.webp`)
-const imgTag = (it, alt = '') => (it.pid && !it.src && !it.image
-  ? `<img data-photo="${it.pid}" alt="${esc(alt)}">`
-  : `<img loading="lazy" src="${imgOf(it)}" alt="${esc(alt)}">`)
+// imagens: do TCGdex (URL), do binder PC (ficheiros privados no Supabase) ou fotos minhas (data-photo → hydratePhotos)
+const imgOf = it => `${it.image}/low.webp`
+const imgTag = (it, alt = '') => {
+  const key = it.src || (!it.image && it.pid) || null
+  return key ? `<img data-photo="${esc(key)}" alt="${esc(alt)}">` : `<img loading="lazy" src="${imgOf(it)}" alt="${esc(alt)}">`
+}
 
 /* ---------- dados (estrutura em localStorage, fotos em IndexedDB) ---------- */
 const DEFAULT_CATEGORIES = ['Pessoal', 'Trabalho', 'Compras', 'Coleção']
 let data = load()
 let view = { page: 'dashboard', binderId: null, pageIdx: 0, edit: false, panel: false, q: '', rlang: 'en', results: [], msg: '', calendarDate: new Date(), selectedDate: today(), categoryFilter: 'all', showPrice: false, link: null, priceMsg: '', valueBack: 'binders', sheet: null, newCard: false }
 
+function normalize(d) {
+  d.binders ||= []
+  d.lang ||= 'en'
+  d.events ||= []
+  d.notes ||= []
+  d.categories ||= [...DEFAULT_CATEGORIES]
+  d.currency ||= 'EUR'
+  d.theme ||= 'light'
+  d.prices ||= {}
+  d.library ||= []
+  return d
+}
 function load() {
   try {
     const d = JSON.parse(localStorage.getItem(KEY))
-    if (d && Array.isArray(d.binders)) {
-      d.events ||= []
-      d.notes ||= []
-      d.categories ||= [...DEFAULT_CATEGORIES]
-      d.currency ||= 'EUR'
-      d.theme ||= 'light'
-      d.prices ||= {}
-      d.library ||= []
-      return d
-    }
+    if (d && Array.isArray(d.binders)) return normalize(d)
   } catch {}
-  return { binders: [], lang: 'en', events: [], notes: [], categories: [...DEFAULT_CATEGORIES], currency: 'EUR', theme: 'light', prices: {}, library: [] }
+  return normalize({})
 }
-function save() { localStorage.setItem(KEY, JSON.stringify(data)) }
+function save() {
+  data._rev = new Date().toISOString()
+  localStorage.setItem(KEY, JSON.stringify(data))
+  schedulePush()
+}
 const uid = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 8)
 const esc = s => String(s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]))
 const on = (id, ev, fn) => { const el = document.getElementById(id); if (el) el.addEventListener(ev, fn) }
@@ -96,6 +107,15 @@ function renderProfile() {
   const ownedCards = data.binders.flatMap(b => b.pages.flatMap(p =>
     p.items.filter(item => item.t === 'card' && item.owned)))
   const totalValue = ownedCards.reduce((sum, item) => sum + (priceOf(item) ?? (Number(item.price) || 0)), 0)
+  const syncText = sync.status === 'ok' ? `Sincronizado às ${new Date(sync.at).toLocaleTimeString('pt-PT', { hour: '2-digit', minute: '2-digit' })}.`
+    : sync.status === 'pendente' ? 'A guardar na nuvem…'
+    : sync.status === 'erro' ? `Erro de sincronização: ${sync.msg}` : 'Sem ligação à nuvem neste momento.'
+  const accountHtml = `
+    <section class="section-block account-section">
+      <div class="section-heading"><div><p class="eyebrow">Sincronização</p><h2>Conta</h2></div></div>
+      <p class="hint">${user ? `Sessão iniciada como ${esc(user.email || '')}. ${esc(syncText)}` : 'Sem sessão iniciada: os dados ficam só neste aparelho.'}</p>
+      <div class="binder-actions">${user ? '<button id="syncNow" class="button-secondary">Sincronizar agora</button><button id="signOut" class="button-secondary">Terminar sessão</button>' : '<button id="goLogin" class="button-secondary">Entrar</button>'}</div>
+    </section>`
   const content = `
     <section class="page-intro"><p class="eyebrow">A tua conta</p><h1>Perfil</h1><p>As tuas preferências e o resumo da tua coleção.</p></section>
     <section class="profile-summary">
@@ -115,13 +135,22 @@ function renderProfile() {
         <span class="theme-copy"><strong>${data.theme === 'dark' ? 'Modo noturno' : 'Modo claro'}</strong><small>${data.theme === 'dark' ? 'Confortável em ambientes escuros' : 'Visual luminoso para o dia'}</small></span>
         <button id="themeToggle" class="theme-toggle ${data.theme === 'dark' ? 'is-dark' : ''}" role="switch" aria-checked="${data.theme === 'dark'}" aria-label="Ativar modo ${data.theme === 'dark' ? 'claro' : 'noturno'}"><span></span></button>
       </div>
-    </section>`
+    </section>
+    ${accountHtml}`
   renderShell(content, 'profile')
   on('themeToggle', 'click', () => {
     data.theme = data.theme === 'dark' ? 'light' : 'dark'
     save()
     renderProfile()
   })
+  on('syncNow', 'click', async e => {
+    e.target.disabled = true
+    clearTimeout(pushTimer)
+    try { await pullIfNewer() } catch (err) { sync.status = 'erro'; sync.msg = String(err.message || err) }
+    render()
+  })
+  on('signOut', 'click', () => signOut())
+  on('goLogin', 'click', () => renderLogin())
 }
 
 // cada item ocupa 1 slot, exceto fotos "largas" (span 2)
@@ -156,18 +185,37 @@ function idb(mode, fn) {
   }))
 }
 const urls = new Map()
-async function photoUrl(pid) {
-  if (urls.has(pid)) return urls.get(pid)
-  const blob = await idb('readonly', s => s.get(pid))
-  if (!blob) return ''
+const photoPath = key => (key.startsWith('seed/') ? `${user.id}/${key}` : `${user.id}/photos/${key}`)
+// key = id de uma foto minha, ou "seed/img/p01_s1.webp" (imagens do binder PC)
+async function photoUrl(key) {
+  if (urls.has(key)) return urls.get(key)
+  let blob = await idb('readonly', s => s.get(key)).catch(() => null)
+  if (!blob && user) {
+    try {
+      const { data: file, error } = await cloud().download(photoPath(key))
+      if (!error && file) { blob = file; await idb('readwrite', s => s.put(blob, key)).catch(() => {}) }
+    } catch {}
+  }
+  if (!blob) return key.startsWith('seed/') ? BASE + key : '' // em desenvolvimento, usa a pasta public/seed se existir
   const u = URL.createObjectURL(blob)
-  urls.set(pid, u)
+  urls.set(key, u)
   return u
+}
+async function storePhoto(pid, blob) {
+  await idb('readwrite', s => s.put(blob, pid))
+  if (user) uploadPhoto(pid, blob)
+}
+async function uploadPhoto(pid, blob) {
+  try {
+    const { error } = await cloud().upload(`${user.id}/photos/${pid}`, blob, { contentType: blob.type || 'image/jpeg', upsert: true })
+    if (error) throw error
+  } catch { sync.status = 'erro'; sync.msg = 'Há fotos por enviar para a nuvem.' }
 }
 function forgetPhoto(pid) {
   const u = urls.get(pid)
   if (u) URL.revokeObjectURL(u)
   urls.delete(pid)
+  if (user) cloud().remove([`${user.id}/photos/${pid}`]).catch(() => {})
   return idb('readwrite', s => s.delete(pid)).catch(() => {})
 }
 async function shrink(file, max = 1400) {
@@ -183,11 +231,161 @@ async function shrink(file, max = 1400) {
 const pidInUse = pid => data.library.some(e => e.pid === pid) || data.binders.some(b => b.pages.some(p => p.items.some(i => i.pid === pid)))
 async function releasePhoto(pid) { if (pid && !pidInUse(pid)) await forgetPhoto(pid) }
 async function hydratePhotos() {
-  for (const img of $app.querySelectorAll('img[data-photo]')) {
+  await Promise.all([...$app.querySelectorAll('img[data-photo]')].map(async img => {
     const u = await photoUrl(img.dataset.photo)
-    if (u) img.src = u
+    if (u && img.isConnected) img.src = u
+  }))
+}
+
+/* ---------- conta e sincronização (Supabase) ---------- */
+let user = null
+let pushTimer = null
+const sync = { status: 'offline', at: null, msg: '' }
+const cloud = () => sb.storage.from('pokebinder')
+const SYNCED_FLAG = 'pokebinder-synced'
+const hasData = d => d.binders.length || d.notes.length || d.events.length || d.library.length
+
+function schedulePush() {
+  if (!user) return
+  sync.status = 'pendente'
+  clearTimeout(pushTimer)
+  pushTimer = setTimeout(pushNow, 1500)
+}
+async function pushNow() {
+  if (!user) return
+  const { error } = await sb.from('app_state').upsert({ user_id: user.id, data, updated_at: data._rev || new Date().toISOString() })
+  if (error) { sync.status = 'erro'; sync.msg = error.message; return }
+  sync.status = 'ok'; sync.at = Date.now(); sync.msg = ''
+  localStorage.setItem(SYNCED_FLAG, user.id)
+}
+// devolve true se trouxe dados mais recentes da nuvem
+async function pullIfNewer() {
+  const { data: row, error } = await sb.from('app_state').select('data, updated_at').maybeSingle()
+  if (error) { sync.status = 'erro'; sync.msg = error.message; return false }
+  if (!row) { data._rev ||= new Date().toISOString(); await pushNow(); return false } // primeira vez: envia o que há neste aparelho
+  const remote = Date.parse(row.updated_at), local = Date.parse(data._rev || '1970-01-01')
+  if (remote > local) {
+    data = normalize(row.data)
+    data._rev = row.updated_at
+    localStorage.setItem(KEY, JSON.stringify(data))
+    localStorage.setItem(SYNCED_FLAG, user.id)
+    sync.status = 'ok'; sync.at = Date.now(); sync.msg = ''
+    return true
+  }
+  if (local > remote) await pushNow()
+  else { sync.status = 'ok'; sync.at = Date.now() }
+  return false
+}
+// 1.ª sincronização neste aparelho: se houver dados dos dois lados, pergunta qual manter
+async function firstSync() {
+  const { data: row, error } = await sb.from('app_state').select('data, updated_at').maybeSingle()
+  if (error) { sync.status = 'erro'; sync.msg = error.message; return }
+  const neverSynced = localStorage.getItem(SYNCED_FLAG) !== user.id
+  if (row && neverSynced && hasData(data) && row.data && row.data.binders && row.data.binders.length) {
+    const useCloud = confirm('Há dados neste aparelho e também na tua conta.\n\nOK = usar os da conta (os deste aparelho são substituídos)\nCancelar = enviar os deste aparelho para a conta')
+    if (useCloud) { data = normalize(row.data); data._rev = row.updated_at; localStorage.setItem(KEY, JSON.stringify(data)); localStorage.setItem(SYNCED_FLAG, user.id); sync.status = 'ok'; sync.at = Date.now() }
+    else { data._rev = new Date().toISOString(); localStorage.setItem(KEY, JSON.stringify(data)); await pushNow() }
+    return
+  }
+  await pullIfNewer()
+}
+async function syncPhotos() {
+  if (!user) return
+  const pids = new Set([...data.library.map(e => e.pid), ...data.binders.flatMap(b => b.pages.flatMap(p => p.items.map(i => i.pid)))].filter(Boolean))
+  if (!pids.size) return
+  const { data: remote } = await cloud().list(`${user.id}/photos`, { limit: 1000 })
+  const have = new Set((remote || []).map(f => f.name))
+  for (const pid of pids) {
+    if (have.has(pid)) continue
+    const blob = await idb('readonly', s => s.get(pid)).catch(() => null)
+    if (blob) await uploadPhoto(pid, blob)
   }
 }
+// descarrega em segundo plano as imagens do binder PC, para funcionarem sem rede
+async function prefetchSeed() {
+  const fila = [...new Set(data.binders.flatMap(b => b.pages.flatMap(p => p.items.map(i => i.src))).filter(k => k && k.startsWith('seed/')))]
+  const worker = async () => {
+    while (fila.length) {
+      const k = fila.shift()
+      const have = await idb('readonly', s => s.get(k)).catch(() => null)
+      if (!have) await photoUrl(k)
+    }
+  }
+  await Promise.all(Array.from({ length: 4 }, worker))
+}
+async function loadSeedJson() {
+  if (user) {
+    try {
+      const { data: file, error } = await cloud().download(`${user.id}/seed/binder.json`)
+      if (!error && file) return JSON.parse(await file.text())
+    } catch {}
+  }
+  return (await fetch(`${BASE}seed/binder.json`)).json() // desenvolvimento: ficheiro local
+}
+
+function renderLogin(msg = '') {
+  document.documentElement.dataset.theme = data.theme
+  $app.innerHTML = `
+    <main class="screen login">
+      <section class="page-intro"><p class="eyebrow">PokéBinder</p><h1>Entrar</h1><p>Os teus binders ficam guardados na tua conta, privados.</p></section>
+      <form id="loginForm" class="login-form">
+        <input name="email" type="email" placeholder="Email" autocomplete="username" required />
+        <input name="password" type="password" placeholder="Palavra-passe" autocomplete="current-password" required />
+        <button class="primary-button">Entrar</button>
+        <p class="hint">${esc(msg)}</p>
+      </form>
+    </main>`
+  on('loginForm', 'submit', async e => {
+    e.preventDefault()
+    const f = new FormData(e.target)
+    const { data: res, error } = await sb.auth.signInWithPassword({ email: String(f.get('email')).trim(), password: String(f.get('password')) })
+    if (error || !res || !res.user) return renderLogin('Email ou palavra-passe errados.')
+    user = res.user
+    $app.innerHTML = '<main class="screen"><p class="hint">A sincronizar…</p></main>'
+    await startSession()
+  })
+}
+async function startSession() {
+  try { await firstSync() } catch (e) { sync.status = 'erro'; sync.msg = String(e.message || e) }
+  render()
+  syncPhotos().catch(() => {})
+  prefetchSeed().catch(() => {})
+}
+async function signOut() {
+  if (!confirm('Terminar sessão neste aparelho? Os dados continuam guardados na tua conta.')) return
+  clearTimeout(pushTimer)
+  await pushNow()
+  if (sync.status === 'erro' && !confirm('Há alterações que não foram enviadas. Terminar mesmo assim?')) return
+  await sb.auth.signOut()
+  localStorage.removeItem(KEY); localStorage.removeItem(SYNCED_FLAG)
+  await idb('readwrite', s => s.clear()).catch(() => {})
+  urls.clear()
+  user = null
+  data = load()
+  view.page = 'dashboard'
+  renderLogin()
+}
+async function boot() {
+  if (!SUPABASE_URL || SUPABASE_URL.includes('COLOCA')) {
+    $app.innerHTML = '<main class="screen"><section class="page-intro"><h1>Falta configurar</h1><p>Abre o ficheiro <strong>src/config.js</strong> e escreve o endereço e a chave pública do teu projeto Supabase.</p></section></main>'
+    return
+  }
+  $app.innerHTML = '<main class="screen"><p class="hint">A abrir…</p></main>'
+  let session = null
+  try { session = (await sb.auth.getSession()).data.session } catch {}
+  if (!session) {
+    if (!navigator.onLine && data.binders.length) return render() // sem rede: usa os dados deste aparelho
+    return renderLogin()
+  }
+  user = session.user
+  await startSession()
+}
+document.addEventListener('visibilitychange', async () => {
+  if (document.visibilityState !== 'visible' || !user || view.page === 'link') return
+  try { if (await pullIfNewer()) render() } catch {}
+})
+window.addEventListener('online', () => { if (user) schedulePush() })
+sb.auth.onAuthStateChange(event => { if (event === 'SIGNED_OUT' && user) { user = null; renderLogin() } })
 
 /* ---------- operações ---------- */
 function addItem(b, item) {
@@ -487,19 +685,19 @@ function renderBinders() {
     e.target.disabled = true
     e.target.textContent = 'A importar…'
     try {
-      const b = await (await fetch(`${BASE}seed/binder.json`)).json()
+      const b = await loadSeedJson()
       data.binders.push({ ...b, id: uid(), seed: 'pc' })
       save()
-    } catch { alert('Não encontrei a pasta public/seed. Confirma que extraíste o seed-pc.zip dentro da pasta public do projeto.') }
+    } catch { alert('Não encontrei o binder PC no teu espaço privado (nem na pasta public/seed).') }
     render()
   })
   on('updPC', 'click', async e => {
     e.target.disabled = true
     try {
-      const seed = await (await fetch(`${BASE}seed/binder.json`)).json()
+      const seed = await loadSeedJson()
       mergeSeed(data.binders.find(b => b.seed === 'pc'), seed)
       save()
-    } catch { alert('Não encontrei a pasta public/seed atualizada. Extrai outra vez o seed-pc.zip dentro de public.') }
+    } catch { alert('Não encontrei o binder PC atualizado no teu espaço privado (nem na pasta public/seed).') }
     render()
   })
   on('goValue', 'click', () => { view.valueBack = 'binders'; view.page = 'value'; render() })
@@ -532,7 +730,7 @@ function cell(it, i, edit) {
       ${imgTag(it, it.name || 'Carta')}${pr != null ? `<span class="price">${eur(pr)}</span>` : ''}${ctl}</div>`
   }
   if (it.t === 'photo') {
-    const img = it.src ? `<img loading="lazy" src="${imgOf(it)}" alt="">` : `<img data-photo="${it.pid}" alt="">`
+    const img = imgTag(it)
     return `<div class="cell photo w${it.span}" data-i="${i}">${img}${ctl}</div>`
   }
   return `<div class="cell blank" data-i="${i}">${ctl}</div>`
@@ -668,7 +866,7 @@ function renderBinder() {
       try {
         const { blob, wide } = await shrink(f)
         const pid = uid()
-        await idb('readwrite', s => s.put(blob, pid))
+        await storePhoto(pid, blob)
         addItem(b, { t: 'photo', pid, span: wide ? 2 : 1 })
       } catch { alert('Não consegui ler a foto ' + f.name) }
     }
@@ -762,7 +960,7 @@ function renderBinder() {
     try {
       const { blob } = await shrink(file)
       const pid = uid()
-      await idb('readwrite', s => s.put(blob, pid))
+      await storePhoto(pid, blob)
       const price = Number(String(f.get('price')).replace(',', '.')) || undefined
       const lang = f.get('lang')
       const priceAt = price ? Date.now() : undefined
@@ -962,7 +1160,7 @@ function renderLink() {
     <div class="bar"><i style="width:${cards.length ? Math.round(linked / cards.length * 100) : 0}%"></i></div></section>
     ${L.cur ? `
       <div class="linkcur">
-        <img src="${imgOf(L.cur)}" alt="">
+        ${imgTag(L.cur)}
         <div>
           <p class="hint">Esta é a carta do teu binder. Escolhe nos resultados a mesma carta (mesma arte e número).</p>
           <button id="skip" class="button-secondary">Saltar</button>
@@ -980,6 +1178,7 @@ function renderLink() {
         ${L.results.map(c => `<div class="cell card owned res" data-id="${esc(c.id)}"><img src="${c.image}/low.webp" alt=""><small>${esc(c.name)} · ${esc(c.localId ?? '')}</small></div>`).join('')}
       </div>` : '<div class="empty-card"><strong>Tudo ligado</strong><p>Não há mais cartas por ligar neste binder.</p></div>'}`
   renderShell(content, 'binders')
+  hydratePhotos()
   on('stop', 'click', () => { view.page = 'binder'; render() })
   on('skip', 'click', () => { L.skipped.push(L.cur); L.cur = pickNext(b, L); loadCurrent(b) })
   on('ignore', 'click', () => { L.cur.skip = true; save(); L.cur = pickNext(b, L); loadCurrent(b) })
@@ -1019,4 +1218,4 @@ function mergeSeed(pc, seed) {
   pc.version = seed.version
 }
 
-render()
+boot()

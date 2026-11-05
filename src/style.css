@@ -366,3 +366,10 @@ details:not(.category-manager) summary { color: #5146aa; font-size: 12px; font-w
 :root[data-theme="dark"] .sheet { background: #1f1e2a; border-color: #33323f; }
 
 a.button-secondary { display: inline-block; text-decoration: none; text-align: center; }
+
+/* login e conta */
+.login { max-width: 420px; margin: 0 auto; padding-top: 28px; }
+.login-form { display: grid; gap: 10px; margin-top: 12px; }
+.login-form input { padding: 14px; border-radius: 12px; border: 1px solid #d9d7ea; background: #fff; color: #17162a; font: inherit; }
+:root[data-theme="dark"] .login-form input { background: #1f1e2a; border-color: #33323f; color: #f2f1f8; }
+.account-section .binder-actions { margin-top: 8px; }
