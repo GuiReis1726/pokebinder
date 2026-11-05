@@ -113,7 +113,7 @@ function renderProfile() {
   const accountHtml = `
     <section class="section-block account-section">
       <div class="section-heading"><div><p class="eyebrow">Sincronização</p><h2>Conta</h2></div></div>
-      <p class="hint">${user ? `Sessão iniciada como ${esc(user.email || '')}. ${esc(syncText)}` : 'Sem sessão iniciada: os dados ficam só neste aparelho.'}</p>
+      <p class="hint">${user ? `Sessão iniciada como ${esc(displayId(user.email))}. ${esc(syncText)}` : 'Sem sessão iniciada: os dados ficam só neste aparelho.'}</p>
       <div class="binder-actions">${user ? '<button id="syncNow" class="button-secondary">Sincronizar agora</button><button id="signOut" class="button-secondary">Terminar sessão</button>' : '<button id="goLogin" class="button-secondary">Entrar</button>'}</div>
     </section>`
   const content = `
@@ -239,6 +239,7 @@ async function hydratePhotos() {
 
 /* ---------- conta e sincronização (Supabase) ---------- */
 let user = null
+let seedAvailable = false
 let pushTimer = null
 const sync = { status: 'offline', at: null, msg: '' }
 const cloud = () => sb.storage.from('pokebinder')
@@ -323,29 +324,76 @@ async function loadSeedJson() {
   return (await fetch(`${BASE}seed/binder.json`)).json() // desenvolvimento: ficheiro local
 }
 
-function renderLogin(msg = '') {
+// o Supabase só aceita email: o ID de utilizador é convertido num endereço interno (nunca recebe mensagens)
+const ID_DOMAIN = 'pokebinder.app'
+function emailFor(id) {
+  const v = id.trim().toLowerCase()
+  if (v.includes('@')) return v // contas antigas, criadas com um email verdadeiro
+  return /^[a-z0-9._-]{3,24}$/.test(v) ? `${v}@${ID_DOMAIN}` : null
+}
+const displayId = email => (email && email.endsWith('@' + ID_DOMAIN) ? email.slice(0, -ID_DOMAIN.length - 1) : email || '')
+async function dropForeignLocalData() { // dados locais de outra conta nunca passam para esta
+  const prev = localStorage.getItem(SYNCED_FLAG)
+  if (prev && prev !== user.id) {
+    localStorage.removeItem(KEY); localStorage.removeItem(SYNCED_FLAG)
+    await idb('readwrite', s => s.clear()).catch(() => {})
+    urls.clear()
+    data = load()
+  }
+}
+function renderLogin(msg = '', mode = 'login', keep = '') {
   document.documentElement.dataset.theme = data.theme
+  const signup = mode === 'signup'
   $app.innerHTML = `
     <main class="screen login">
-      <section class="page-intro"><p class="eyebrow">PokéBinder</p><h1>Entrar</h1><p>Os teus binders ficam guardados na tua conta, privados.</p></section>
+      <section class="page-intro"><p class="eyebrow">PokéBinder</p><h1>${signup ? 'Criar conta' : 'Entrar'}</h1>
+        <p>${signup ? 'Escolhe um ID de utilizador e uma palavra-passe. Cada pessoa tem os seus binders privados.' : 'Os teus binders ficam guardados na tua conta, privados.'}</p></section>
       <form id="loginForm" class="login-form">
-        <input name="email" type="email" placeholder="Email" autocomplete="username" required />
-        <input name="password" type="password" placeholder="Palavra-passe" autocomplete="current-password" required />
-        <button class="primary-button">Entrar</button>
+        <input name="username" type="text" value="${esc(keep)}" placeholder="ID de utilizador" autocomplete="username" autocapitalize="none" autocorrect="off" spellcheck="false" required />
+        <input name="password" type="password" placeholder="Palavra-passe" autocomplete="${signup ? 'new-password' : 'current-password'}" required />
+        ${signup ? '<input name="password2" type="password" placeholder="Repete a palavra-passe" autocomplete="new-password" required />' : ''}
+        <button class="primary-button">${signup ? 'Criar conta' : 'Entrar'}</button>
         <p class="hint">${esc(msg)}</p>
+        ${signup ? '<p class="hint">Atenção: não há recuperação de palavra-passe. Quando o browser perguntar, escolhe guardá-la.</p>' : ''}
       </form>
+      <button id="switchMode" class="text-button" type="button">${signup ? 'Já tenho conta' : 'Criar uma conta nova'}</button>
     </main>`
+  on('switchMode', 'click', () => renderLogin('', signup ? 'login' : 'signup'))
   on('loginForm', 'submit', async e => {
     e.preventDefault()
     const f = new FormData(e.target)
-    const { data: res, error } = await sb.auth.signInWithPassword({ email: String(f.get('email')).trim(), password: String(f.get('password')) })
-    if (error || !res || !res.user) return renderLogin('Email ou palavra-passe errados.')
-    user = res.user
+    const id = String(f.get('username')).trim(), password = String(f.get('password'))
+    const email = emailFor(id)
+    if (!email) return renderLogin('O ID deve ter 3 a 24 caracteres: letras, números, ponto, hífen ou _ (sem espaços).', mode, id)
+    if (signup) {
+      if (password.length < 8) return renderLogin('A palavra-passe precisa de pelo menos 8 caracteres.', mode, id)
+      if (password !== String(f.get('password2'))) return renderLogin('As palavras-passe não coincidem.', mode, id)
+      const { data: res, error } = await sb.auth.signUp({ email, password })
+      if (error) return renderLogin(/registered|exists/i.test(error.message) ? 'Esse ID já existe. Escolhe outro.' : `Não foi possível criar a conta: ${error.message}`, mode, id)
+      if (res.session) user = res.user
+      else {
+        const r = await sb.auth.signInWithPassword({ email, password })
+        if (r.error || !r.data.user) return renderLogin('Conta criada, mas ainda não está ativa. Tenta entrar daqui a pouco.', 'login', id)
+        user = r.data.user
+      }
+    } else {
+      const { data: res, error } = await sb.auth.signInWithPassword({ email, password })
+      if (error || !res || !res.user) return renderLogin('ID ou palavra-passe errados.', mode, id)
+      user = res.user
+    }
     $app.innerHTML = '<main class="screen"><p class="hint">A sincronizar…</p></main>'
+    await dropForeignLocalData()
     await startSession()
   })
 }
+async function detectSeed() {
+  try {
+    const { data: files } = await cloud().list(`${user.id}/seed`, { limit: 20 })
+    seedAvailable = (files || []).some(f => f.name === 'binder.json')
+  } catch { seedAvailable = false }
+}
 async function startSession() {
+  await detectSeed()
   try { await firstSync() } catch (e) { sync.status = 'erro'; sync.msg = String(e.message || e) }
   render()
   syncPhotos().catch(() => {})
@@ -357,6 +405,7 @@ async function signOut() {
   await pushNow()
   if (sync.status === 'erro' && !confirm('Há alterações que não foram enviadas. Terminar mesmo assim?')) return
   await sb.auth.signOut()
+  seedAvailable = false
   localStorage.removeItem(KEY); localStorage.removeItem(SYNCED_FLAG)
   await idb('readwrite', s => s.clear()).catch(() => {})
   urls.clear()
@@ -674,8 +723,8 @@ function renderBinders() {
       <small>Tamanho de cada página: colunas × linhas.</small>
     </form>
     <div class="binder-actions">
-      ${data.binders.some(b => b.seed === 'pc') ? '' : '<button id="importPC" class="button-secondary">Importar binder PC <span>40 páginas</span></button>'}
-      ${data.binders.some(b => b.seed === 'pc' && (b.version || 1) < 3) ? '<button id="updPC" class="button-secondary">Atualizar binder PC</button>' : ''}
+      ${seedAvailable && !data.binders.some(b => b.seed === 'pc') ? '<button id="importPC" class="button-secondary">Importar binder PC <span>40 páginas</span></button>' : ''}
+      ${seedAvailable && data.binders.some(b => b.seed === 'pc' && (b.version || 1) < 3) ? '<button id="updPC" class="button-secondary">Atualizar binder PC</button>' : ''}
       ${data.binders.length ? '<button id="goValue" class="button-secondary">Valor da coleção</button>' : ''}
     </div>
     <section class="binder-list">${binders || '<div class="empty-card"><span class="empty-icon">▤</span><strong>A tua coleção começa aqui</strong><p>Cria o teu primeiro binder para começares a organizar cartas.</p></div>'}</section>`
@@ -1218,4 +1267,5 @@ function mergeSeed(pc, seed) {
   pc.version = seed.version
 }
 
+if ('serviceWorker' in navigator && location.protocol === 'https:') navigator.serviceWorker.register(`${BASE}sw.js`).catch(() => {})
 boot()
