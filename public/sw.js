@@ -1,6 +1,6 @@
-// Service worker do PokéBinder: guarda a app no aparelho para abrir depressa e funcionar sem rede.
+// Service worker do Raptor Rips: guarda a app no aparelho para abrir depressa e funcionar sem rede.
 // Pedidos a outros sites (Supabase, TCGdex…) passam sempre direto e nunca são guardados aqui.
-const CACHE = 'pokebinder-v1'
+const CACHE = 'raptorrips-v2'
 
 self.addEventListener('install', () => self.skipWaiting())
 self.addEventListener('activate', e => {

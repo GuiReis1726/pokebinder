@@ -29,7 +29,7 @@ function normalize(d) {
   d.notes ||= []
   d.categories ||= [...DEFAULT_CATEGORIES]
   d.currency ||= 'EUR'
-  d.theme ||= 'light'
+  d.theme ||= 'dark'
   d.prices ||= {}
   d.library ||= []
   return d
@@ -57,7 +57,7 @@ const dateOf = value => new Date(`${value}T12:00:00`)
 const formatDate = value => dateOf(value).toLocaleDateString('pt-PT', { day: 'numeric', month: 'short' })
 const money = value => new Intl.NumberFormat('pt-PT', { style: 'currency', currency: data.currency || 'EUR' }).format(value || 0)
 const categoryColor = category => {
-  const colors = ['#7c6cf2', '#f2994a', '#eb5757', '#27ae60', '#2d9cdb', '#bb6bd9']
+  const colors = ['#e5502f', '#e3a24a', '#9a9ca3', '#27ae60', '#2d9cdb', '#c0392b']
   const i = Math.max(0, data.categories.indexOf(category))
   return colors[i % colors.length]
 }
@@ -79,12 +79,7 @@ function renderShell(content, active) {
   $app.innerHTML = `
     <header class="app-header">
       <a class="brand" href="#" id="brandHome">
-        <svg class="pokeball-icon" viewBox="0 0 32 32" aria-hidden="true" focusable="false">
-          <circle cx="16" cy="16" r="14" fill="#f1f3f5"/><path d="M2 16a14 14 0 0 1 28 0z" fill="#e03131"/>
-          <circle cx="16" cy="16" r="14" fill="none" stroke="currentColor" stroke-width="2"/>
-          <path d="M2 16h28" fill="none" stroke="currentColor" stroke-width="3"/>
-          <circle cx="16" cy="16" r="4.5" fill="#f1f3f5" stroke="currentColor" stroke-width="2"/>
-        </svg><span>PokéBinder</span>
+        <img class="brand-logo" src="${BASE}logo.webp" alt="" width="36" height="36"><span>Raptor Rips</span>
       </a>
     </header>
     <main class="screen">${content}</main>
@@ -346,7 +341,7 @@ function renderLogin(msg = '', mode = 'login', keep = '') {
   const signup = mode === 'signup'
   $app.innerHTML = `
     <main class="screen login">
-      <section class="page-intro"><p class="eyebrow">PokéBinder</p><h1>${signup ? 'Criar conta' : 'Entrar'}</h1>
+      <section class="page-intro login-hero"><img class="login-logo" src="${BASE}logo.webp" alt="Raptor Rips"><h1>${signup ? 'Criar conta' : 'Entrar'}</h1>
         <p>${signup ? 'Escolhe um ID de utilizador e uma palavra-passe. Cada pessoa tem os seus binders privados.' : 'Os teus binders ficam guardados na tua conta, privados.'}</p></section>
       <form id="loginForm" class="login-form">
         <input name="username" type="text" value="${esc(keep)}" placeholder="ID de utilizador" autocomplete="username" autocapitalize="none" autocorrect="off" spellcheck="false" required />
@@ -648,7 +643,7 @@ function renderCalendar() {
       <div class="month-header"><button class="icon-button" id="prevMonth" aria-label="Mês anterior">‹</button><h2>${esc(monthLabel)}</h2><button class="icon-button" id="nextMonth" aria-label="Mês seguinte">›</button></div>
       <div class="calendar-grid weekday-labels">${['S', 'T', 'Q', 'Q', 'S', 'S', 'D'].map((day, i) => `<span>${day}${i === 0 ? '<i>eg</i>' : i === 1 ? '<i>er</i>' : i === 2 ? '<i>ua</i>' : i === 3 ? '<i>ui</i>' : i === 4 ? '<i>ex</i>' : i === 5 ? '<i>áb</i>' : '<i>om</i>'}</span>`).join('')}</div>
       <div class="calendar-grid">${cells.join('')}</div>
-      <div class="calendar-legend"><span><i style="--category-color:#7c6cf2"></i> Os teus eventos</span><span>${monthEvents.length} ${monthEvents.length === 1 ? 'marcação' : 'marcações'} este mês</span></div>
+      <div class="calendar-legend"><span><i style="--category-color:#e5502f"></i> Os teus eventos</span><span>${monthEvents.length} ${monthEvents.length === 1 ? 'marcação' : 'marcações'} este mês</span></div>
     </section>
     <section class="section-block">
       <div class="section-heading"><div><p class="eyebrow">Personaliza a tua agenda</p><h2>Marcações</h2></div></div>

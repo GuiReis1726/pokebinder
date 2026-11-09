@@ -1,13 +1,13 @@
 {
-  "name": "PokéBinder",
-  "short_name": "PokéBinder",
+  "name": "Raptor Rips",
+  "short_name": "Raptor Rips",
   "description": "Os meus binders de cartas Pokémon",
   "start_url": "./",
   "scope": "./",
   "display": "standalone",
   "orientation": "portrait",
-  "background_color": "#f6f5ff",
-  "theme_color": "#7c6cf2",
+  "background_color": "#0a0a0c",
+  "theme_color": "#0a0a0c",
   "icons": [
     { "src": "icons/icon-192.png", "sizes": "192x192", "type": "image/png" },
     { "src": "icons/icon-512.png", "sizes": "512x512", "type": "image/png" },
