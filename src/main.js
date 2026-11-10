@@ -1,6 +1,7 @@
 import './style.css'
 import { sb } from './supabase.js'
 import { SUPABASE_URL } from './config.js'
+import { createPokemon, defaultAspects } from './pokemon.js'
 
 const API = 'https://api.tcgdex.net/v2'
 const KEY = 'pokebinder-v2'
@@ -32,6 +33,9 @@ function normalize(d) {
   d.theme ||= 'dark'
   d.prices ||= {}
   d.library ||= []
+  d.teams ||= {}
+  d.ratings ||= {}
+  d.aspects ||= defaultAspects()
   return d
 }
 function load() {
@@ -66,6 +70,9 @@ const icon = name => ({
   calendar: '<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="5" width="18" height="16" rx="2"/><path d="M16 3v4M8 3v4M3 10h18"/></svg>',
   notes: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 3h14a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2z"/><path d="M7 8h10M7 12h10M7 16h6"/></svg>',
   binders: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 3h14a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H5z"/><path d="M5 3a3 3 0 0 0 0 18M9 8h8M9 12h8M9 16h5"/></svg>',
+  staraptor: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M15 10.4c2.8-1 5.4-3.4 7.6-7.6.2 2 .2 3.6-.2 5.2l-2.2-.4.6 3.6-2.6-.8-.2 3.6-2.2-1.8"/><g transform="matrix(-1 0 0 1 24 0)"><path d="M15 10.4c2.8-1 5.4-3.4 7.6-7.6.2 2 .2 3.6-.2 5.2l-2.2-.4.6 3.6-2.6-.8-.2 3.6-2.2-1.8"/></g><path d="M9.2 8C9.2 5.4 10.4 4.4 12 4.4s2.8 1 2.8 3.6c0 2-1.2 3.4-2.8 4.8-1.6-1.4-2.8-2.8-2.8-4.8z"/><path d="M9.6 6C9.4 3.6 10.8 1.8 13.4 1.2c-1 1.2-1 2.4-.4 3.6"/><path d="M10.8 15 12 21l1.2-6"/></svg>',
+  team: '<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="9" cy="8" r="3"/><circle cx="17" cy="9" r="2.4"/><path d="M3 20a6 6 0 0 1 12 0M15.4 14.4A5 5 0 0 1 21 19.5"/></svg>',
+  star: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="m12 3 2.7 5.6 6.1.9-4.4 4.3 1 6.1L12 17l-5.4 2.9 1-6.1L3.2 9.5l6.1-.9z"/></svg>',
   profile: '<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="8" r="4"/><path d="M4 21a8 8 0 0 1 16 0"/></svg>',
   sun: '<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="4"/><path d="M12 2v2m0 16v2M4.93 4.93l1.42 1.42m11.3 11.3 1.42 1.42M2 12h2m16 0h2M4.93 19.07l1.42-1.42m11.3-11.3 1.42-1.42"/></svg>',
   moon: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20.9 13A9 9 0 0 1 11 3.1 9 9 0 1 0 20.9 13z"/></svg>',
@@ -87,7 +94,7 @@ function renderShell(content, active) {
       <button data-tab="calendar" class="${active === 'calendar' ? 'active' : ''}">${icon('calendar')}<span>Calendário</span></button>
       <button data-tab="notes" class="${active === 'notes' ? 'active' : ''}">${icon('notes')}<span>Notas</span></button>
       <button data-tab="dashboard" class="home-tab ${active === 'dashboard' ? 'active' : ''}">${icon('home')}<span>Início</span></button>
-      <button data-tab="binders" class="${active === 'binders' ? 'active' : ''}">${icon('binders')}<span>Binders</span></button>
+      <button data-tab="pokemon" class="${active === 'binders' || active === 'pokemon' ? 'active' : ''}">${icon('staraptor')}<span>Pokémon</span></button>
       <button data-tab="profile" class="${active === 'profile' ? 'active' : ''}">${icon('profile')}<span>Perfil</span></button>
     </nav>
     `
@@ -451,6 +458,7 @@ function render() {
   if (view.page === 'binders') return renderBinders()
   if (view.page === 'binder') return renderBinder()
   if (view.page === 'link') return renderLink()
+  if (['pokemon', 'team', 'teamEdit', 'rate'].includes(view.page)) return pk.render(view.page)
   if (view.page === 'value') return renderValue()
   if (view.page === 'profile') return renderProfile()
   renderDashboard()
@@ -709,6 +717,7 @@ function renderBinders() {
     </button>`
   }).join('')
   const content = `
+    <button id="toHub" class="back-button">← Pokémon</button>
     <section class="page-intro"><p class="eyebrow">A tua coleção Pokémon</p><h1>Os meus binders</h1><p>Organiza, acompanha e completa as tuas coleções.</p></section>
     <form id="newBinder" class="create-binder-card">
       <label for="binderName">Criar binder</label>
@@ -744,6 +753,7 @@ function renderBinders() {
     } catch { alert('Não encontrei o binder PC atualizado no teu espaço privado (nem na pasta public/seed).') }
     render()
   })
+  on('toHub', 'click', () => { view.page = 'pokemon'; render() })
   on('goValue', 'click', () => { view.valueBack = 'binders'; view.page = 'value'; render() })
   on('newBinder', 'submit', e => {
     e.preventDefault()
@@ -1262,5 +1272,6 @@ function mergeSeed(pc, seed) {
   pc.version = seed.version
 }
 
+const pk = createPokemon({ getData: () => data, save, renderShell, on, esc, uid, icon, view, render, root: () => $app, go: page => { view.page = page; render() } })
 if ('serviceWorker' in navigator && location.protocol === 'https:') navigator.serviceWorker.register(`${BASE}sw.js`).catch(() => {})
 boot()
