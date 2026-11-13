@@ -15,7 +15,7 @@ const BASE = import.meta.env.BASE_URL
 const imgOf = it => `${it.image}/low.webp`
 const imgTag = (it, alt = '') => {
   const key = it.src || (!it.image && it.pid) || null
-  return key ? `<img data-photo="${esc(key)}" alt="${esc(alt)}">` : `<img loading="lazy" src="${imgOf(it)}" alt="${esc(alt)}">`
+  return key ? `<img data-photo="${esc(key)}" alt="${esc(alt)}">` : `<img loading="lazy" src="${esc(imgOf(it))}" alt="${esc(alt)}">`
 }
 
 /* ---------- dados (estrutura em localStorage, fotos em IndexedDB) ---------- */
@@ -118,6 +118,13 @@ function renderProfile() {
       <p class="hint">${user ? `Sessão iniciada como ${esc(displayId(user.email))}. ${esc(syncText)}` : 'Sem sessão iniciada: os dados ficam só neste aparelho.'}</p>
       <div class="binder-actions">${user ? '<button id="syncNow" class="button-secondary">Sincronizar agora</button><button id="signOut" class="button-secondary">Terminar sessão</button>' : '<button id="goLogin" class="button-secondary">Entrar</button>'}</div>
     </section>`
+  const backupHtml = `
+    <section class="section-block account-section">
+      <div class="section-heading"><div><p class="eyebrow">Segurança</p><h2>Backup</h2></div></div>
+      <p class="hint">Um ficheiro com os teus binders, notas, equipas, classificações e fotos, para recuperares tudo se algo correr mal.</p>
+      <div class="binder-actions"><button id="exportBackup" class="button-secondary">Exportar backup</button><button id="importBackupBtn" class="button-secondary">Importar backup</button><input id="importBackup" type="file" accept="application/json,.json" hidden></div>
+      <p class="hint" id="backupMsg"></p>
+    </section>`
   const content = `
     <section class="page-intro"><p class="eyebrow">A tua conta</p><h1>Perfil</h1><p>As tuas preferências e o resumo da tua coleção.</p></section>
     <section class="profile-summary">
@@ -138,7 +145,8 @@ function renderProfile() {
         <button id="themeToggle" class="theme-toggle ${data.theme === 'dark' ? 'is-dark' : ''}" role="switch" aria-checked="${data.theme === 'dark'}" aria-label="Ativar modo ${data.theme === 'dark' ? 'claro' : 'noturno'}"><span></span></button>
       </div>
     </section>
-    ${accountHtml}`
+    ${accountHtml}
+    ${backupHtml}`
   renderShell(content, 'profile')
   on('themeToggle', 'click', () => {
     data.theme = data.theme === 'dark' ? 'light' : 'dark'
@@ -153,6 +161,23 @@ function renderProfile() {
   })
   on('signOut', 'click', () => signOut())
   on('goLogin', 'click', () => renderLogin())
+  on('exportBackup', 'click', async e => {
+    e.target.disabled = true
+    const msg = document.getElementById('backupMsg')
+    msg.textContent = 'A preparar o backup…'
+    try { const r = await exportBackup(); msg.textContent = `Backup guardado: ${r.binders} binder(s), ${r.notes} nota(s), ${r.photos} foto(s).` } catch { msg.textContent = 'Não consegui criar o backup.' }
+    e.target.disabled = false
+  })
+  on('importBackupBtn', 'click', () => document.getElementById('importBackup').click())
+  on('importBackup', 'change', async e => {
+    const file = e.target.files[0]; if (!file) return
+    const msg = document.getElementById('backupMsg')
+    msg.textContent = 'A importar…'
+    const r = await importBackup(file)
+    e.target.value = ''
+    if (r && r.ok) { renderProfile(); document.getElementById('backupMsg').textContent = `Backup importado: ${r.resumo}.` }
+    else msg.textContent = r === 'cancelado' ? '' : r
+  })
 }
 
 // cada item ocupa 1 slot, exceto fotos "largas" (span 2)
@@ -324,6 +349,41 @@ async function loadSeedJson() {
     } catch {}
   }
   return (await fetch(`${BASE}seed/binder.json`)).json() // desenvolvimento: ficheiro local
+}
+
+/* ---------- backup (exportar e importar) ---------- */
+const blobToDataUrl = blob => new Promise((resolve, reject) => { const r = new FileReader(); r.onload = () => resolve(r.result); r.onerror = reject; r.readAsDataURL(blob) })
+async function exportBackup() {
+  const keys = new Set([...data.library.map(e => e.pid), ...data.binders.flatMap(b => b.pages.flatMap(p => p.items.map(i => i.pid)))].filter(Boolean))
+  const photos = {}
+  for (const pid of keys) {
+    await photoUrl(pid) // garante que a foto está neste aparelho (descarrega da conta, se preciso)
+    const blob = await idb('readonly', s => s.get(pid)).catch(() => null)
+    if (blob) photos[pid] = await blobToDataUrl(blob)
+  }
+  const file = new Blob([JSON.stringify({ app: 'raptor-rips', version: 1, exportedAt: new Date().toISOString(), data, photos })], { type: 'application/json' })
+  const a = document.createElement('a')
+  a.href = URL.createObjectURL(file); a.download = `raptor-rips-backup-${today()}.json`
+  document.body.appendChild(a); a.click(); a.remove()
+  setTimeout(() => URL.revokeObjectURL(a.href), 4000)
+  return { binders: data.binders.length, notes: data.notes.length, photos: Object.keys(photos).length }
+}
+// devolve uma mensagem de erro, 'cancelado', ou { ok: true, ... }
+async function importBackup(file) {
+  let obj
+  try { obj = JSON.parse(await file.text()) } catch { return 'Esse ficheiro não é um backup válido.' }
+  if (!obj || obj.app !== 'raptor-rips' || !obj.data || !Array.isArray(obj.data.binders)) return 'Esse ficheiro não parece ser um backup do Raptor Rips.'
+  const d = obj.data, when = obj.exportedAt ? new Date(obj.exportedAt).toLocaleDateString('pt-PT') : 'data desconhecida'
+  const resumo = `${d.binders.length} binder(s), ${(d.notes || []).length} nota(s), ${Object.keys(d.ratings || {}).length} Pokémon classificados, ${Object.keys(obj.photos || {}).length} foto(s)`
+  if (!confirm(`Importar este backup (${when})?\n\n${resumo}\n\nOs dados atuais, neste aparelho e na tua conta, serão SUBSTITUÍDOS.`)) return 'cancelado'
+  for (const [pid, url] of Object.entries(obj.photos || {})) {
+    try { await storePhoto(pid, await (await fetch(url)).blob()) } catch {}
+  }
+  data = normalize(d)
+  urls.clear()
+  view.noteEditId = null
+  save()
+  return { ok: true, resumo }
 }
 
 // o Supabase só aceita email: o ID de utilizador é convertido num endereço interno (nunca recebe mensagens)
@@ -541,13 +601,17 @@ function renderDashboard() {
 
 function renderNotes() {
   const activeNotes = data.notes.filter(note => !note.done)
+  const editing = data.notes.find(note => note.id === view.noteEditId) || null
+  if (!editing) view.noteEditId = null
+  const catOptions = categoryOptions(editing ? editing.category : data.categories[0]) +
+    (editing && editing.category && !data.categories.includes(editing.category) ? `<option value="${esc(editing.category)}" selected>${esc(editing.category)}</option>` : '')
   const content = `
     <section class="page-intro"><p class="eyebrow">As tuas ideias</p><h1>Notas</h1><p>Guarda o que quiseres, com o detalhe que precisares.</p></section>
     <section class="section-block">
-      <div class="section-heading"><div><p class="eyebrow">Nova nota</p><h2>Escreve uma ideia</h2></div></div>
+      <div class="section-heading"><div><p class="eyebrow">${editing ? 'A editar' : 'Nova nota'}</p><h2>${editing ? 'Altera a tua nota' : 'Escreve uma ideia'}</h2></div></div>
       <form class="note-form" id="newNote">
         <label for="noteTitle">Título</label>
-        <input id="noteTitle" name="title" placeholder="Dá um título à nota" required>
+        <input id="noteTitle" name="title" placeholder="Dá um título à nota" value="${esc(editing ? noteTitle(editing) : '')}" required>
         <label for="noteBody">Texto</label>
         <div class="note-toolbar" role="toolbar" aria-label="Formatação do texto">
           <button type="button" data-note-command="bold" aria-label="Negrito" title="Negrito"><strong>N</strong></button>
@@ -562,19 +626,21 @@ function renderNotes() {
         <div id="noteBody" class="note-editor" contenteditable="true" role="textbox" aria-label="Texto da nota" aria-multiline="true" data-placeholder="Escreve aqui a tua nota, sem limite de tamanho…"></div>
         <div class="note-form-options">
           <label for="noteCategory">Categoria</label>
-          <select id="noteCategory" name="category" aria-label="Categoria da nota">${categoryOptions(data.categories[0])}</select>
-          <label class="note-date-field" for="noteDueDate"><span>Data (opcional)</span><input id="noteDueDate" name="dueDate" type="date" aria-label="Data de lembrete (opcional)"></label>
+          <select id="noteCategory" name="category" aria-label="Categoria da nota">${catOptions}</select>
+          <label class="note-date-field" for="noteDueDate"><span>Data (opcional)</span><input id="noteDueDate" name="dueDate" type="date" value="${esc(editing ? editing.dueDate || '' : '')}" aria-label="Data de lembrete (opcional)"></label>
         </div>
-        <button class="primary-button" type="submit">Guardar nota <span>+</span></button>
+        <button class="primary-button" type="submit">${editing ? 'Guardar alterações <span>✓</span>' : 'Guardar nota <span>+</span>'}</button>
+        ${editing ? '<button class="button-secondary" type="button" id="cancelNoteEdit">Cancelar</button>' : ''}
       </form>
     </section>
     <section class="section-block">
       <div class="section-heading"><div><p class="eyebrow">Tudo guardado</p><h2>As minhas notas</h2></div><span class="count-badge">${activeNotes.length}</span></div>
       ${data.notes.length ? `<div class="saved-notes">${data.notes.map(note => `
-        <article class="saved-note ${note.done ? 'is-done' : ''}">
+        <article class="saved-note ${note.done ? 'is-done' : ''} ${editing && editing.id === note.id ? 'is-editing' : ''}">
           <div class="saved-note-heading">
             <button class="note-check ${note.done ? 'is-done' : ''}" data-note-toggle="${note.id}" aria-label="${note.done ? 'Reabrir nota' : 'Concluir nota'}" aria-pressed="${Boolean(note.done)}">${note.done ? '✓' : ''}</button>
             <h3>${esc(noteTitle(note))}</h3>
+            <button class="note-edit" data-note-edit="${note.id}" aria-label="Editar nota" title="Editar">✎</button>
             <button class="note-delete" data-note-delete="${note.id}" aria-label="Apagar nota">×</button>
           </div>
           ${noteBody(note) ? `<div class="saved-note-body note-rich-content">${noteBodyMarkup(note)}</div>` : ''}
@@ -588,19 +654,26 @@ function renderNotes() {
     const form = new FormData(e.target)
     const title = String(form.get('title')).trim()
     if (!title) return
-    const editor = document.getElementById('noteBody')
-    data.notes.unshift({
-      id: uid(),
-      title,
-      body: sanitizeNoteHtml(editor?.innerHTML || ''),
-      bodyFormat: 'html',
-      category: String(form.get('category')),
-      dueDate: String(form.get('dueDate') || ''),
-      done: false
-    })
+    const body = sanitizeNoteHtml(document.getElementById('noteBody')?.innerHTML || '')
+    if (editing) {
+      Object.assign(editing, { title, body, bodyFormat: 'html', category: String(form.get('category')), dueDate: String(form.get('dueDate') || '') })
+      delete editing.text
+      view.noteEditId = null
+    } else {
+      data.notes.unshift({ id: uid(), title, body, bodyFormat: 'html', category: String(form.get('category')), dueDate: String(form.get('dueDate') || ''), done: false })
+    }
     save(); renderNotes()
+    if (editing) window.scrollTo({ top: 0, behavior: 'smooth' })
   })
   const editor = document.getElementById('noteBody')
+  if (editing && editor) editor.innerHTML = noteBodyMarkup(editing)
+  on('cancelNoteEdit', 'click', () => { view.noteEditId = null; renderNotes() })
+  $app.querySelectorAll('[data-note-edit]').forEach(button => button.addEventListener('click', () => {
+    view.noteEditId = button.dataset.noteEdit
+    renderNotes()
+    window.scrollTo({ top: 0, behavior: 'smooth' })
+    document.getElementById('noteTitle')?.focus({ preventScroll: true })
+  }))
   editor?.addEventListener('paste', event => {
     event.preventDefault()
     document.execCommand('insertText', false, event.clipboardData?.getData('text/plain') || '')
@@ -619,6 +692,7 @@ function renderNotes() {
   }))
   $app.querySelectorAll('[data-note-delete]').forEach(button => button.addEventListener('click', () => {
     data.notes = data.notes.filter(item => item.id !== button.dataset.noteDelete)
+    if (view.noteEditId === button.dataset.noteDelete) view.noteEditId = null
     save(); renderNotes()
   }))
 }
@@ -1153,6 +1227,12 @@ function renderValue() {
   const upds = Object.values(data.prices).map(p => p.upd).filter(Boolean).sort()
   const manualCards = data.binders.flatMap(cardsOf).filter(c => c.price > 0 && !(c.id && data.prices[pkey(c)] && data.prices[pkey(c)].v != null))
   const oldManual = manualCards.filter(c => !c.priceAt || Date.now() - c.priceAt > 30 * 864e5).length
+  const noPriceCards = data.binders.flatMap(cardsOf).filter(c => c.id && priceOf(c) == null)
+  const langName = l => (LANGS.find(([c]) => c === l) || [l, l])[1]
+  const byLang = {}
+  for (const c of noPriceCards) byLang[c.lang || 'en'] = (byLang[c.lang || 'en'] || 0) + 1
+  const noPriceNote = Object.entries(byLang).map(([l, n]) => `${langName(l)}: ${n}`).join(' · ')
+  const noPriceShown = noPriceCards.slice(0, 20)
   const manualNote = manualCards.length ? ` ${manualCards.length} carta(s) com preço à mão${oldManual ? ` (${oldManual} com mais de 30 dias ou sem data: confirma no Cardmarket)` : ''}.` : ''
   const content = `
     <button id="back" class="back-button">← Voltar</button>
@@ -1165,12 +1245,25 @@ function renderValue() {
       <span class="binder-meta">${r.ownedN}/${r.cards.length} adquiridas · valor ${eur(r.owned)}</span>
       <span class="binder-meta">${r.linked}/${r.linkable} cartas ligadas${r.noPrice ? ` · ${r.noPrice} sem preço` : ''}</span>
     </div>`).join('')}</section>
+    ${noPriceCards.length ? `<section class="section-block"><div class="section-heading"><div><p class="eyebrow">Atenção</p><h2>Sem preço (${noPriceCards.length})</h2></div></div>
+      <p class="hint">${Object.keys(data.prices).length ? `O TCGdex não devolveu preço para estas cartas ligadas (${esc(noPriceNote)}). Podes escrever o preço à mão.` : 'Carrega primeiro em "Atualizar preços". As que continuarem aqui não têm preço no TCGdex.'}</p>
+      ${noPriceShown.map((c, i) => `<div class="vrow">${imgTag(c)}<span>${esc(c.name || (c.hint && c.hint.n) || 'Carta')} <small>${esc(langName(c.lang || 'en'))}</small></span><button class="button-secondary" data-nopricei="${i}">Preço à mão</button></div>`).join('')}
+      ${noPriceCards.length > noPriceShown.length ? `<p class="hint">E mais ${noPriceCards.length - noPriceShown.length} cartas.</p>` : ''}</section>` : ''}
     ${top.length ? `<section class="section-block"><div class="section-heading"><div><p class="eyebrow">Top 10</p><h2>${ownedCards.length ? 'Mais valiosas (adquiridas)' : 'Mais valiosas'}</h2></div></div>${top.map(c => `
       <div class="vrow">${imgTag(c)}<span>${esc(c.name || (c.hint && c.hint.n) || 'Carta')} <small>${esc(c.lang || 'en')}</small></span><strong>${eur(priceOf(c))}</strong></div>`).join('')}</section>` : ''}`
   renderShell(content, 'binders')
   hydratePhotos()
   on('back', 'click', () => { view.page = view.valueBack; render() })
   on('refresh', 'click', refreshPrices)
+  $app.querySelectorAll('[data-nopricei]').forEach(b => b.addEventListener('click', () => {
+    const card = noPriceShown[Number(b.dataset.nopricei)]
+    const v = prompt('Preço desta carta em euros (ex.: 12,50).', '')
+    if (v === null) return
+    const n = Number(String(v).replace(',', '.'))
+    if (!(n > 0)) return alert('Valor inválido.')
+    card.price = n; card.priceAt = Date.now()
+    save(); renderValue()
+  }))
 }
 
 /* ---------- ligar cartas do binder ao TCGdex ---------- */
