@@ -13,9 +13,13 @@ const $app = document.getElementById('app')
 const BASE = import.meta.env.BASE_URL
 // imagens: do TCGdex (URL), do binder PC (ficheiros privados no Supabase) ou fotos minhas (data-photo → hydratePhotos)
 const imgOf = it => `${it.image}/low.webp`
+const placeholderHtml = it => `<span class="card-ph"><strong>${esc(it.name || 'Carta')}</strong><small>${esc(it.lang || '')}</small></span>`
 const imgTag = (it, alt = '') => {
-  const key = it.src || (!it.image && it.pid) || null
-  return key ? `<img data-photo="${esc(key)}" alt="${esc(alt)}">` : `<img loading="lazy" src="${esc(imgOf(it))}" alt="${esc(alt)}">`
+  const key = it.pid || it.src || null // foto minha ou ficheiro privado do binder PC
+  if (key) return `<img data-photo="${esc(key)}" alt="${esc(alt)}">`
+  if (it.url) return `<img data-url="1" data-ph="${esc(placeholderHtml(it))}" loading="lazy" referrerpolicy="no-referrer" src="${esc(it.url)}" alt="${esc(alt)}">`
+  if (it.image) return `<img loading="lazy" src="${esc(imgOf(it))}" alt="${esc(alt)}">`
+  return placeholderHtml(it) // carta sem foto (por exemplo, para planear um binder)
 }
 
 /* ---------- dados (estrutura em localStorage, fotos em IndexedDB) ---------- */
@@ -258,6 +262,10 @@ async function shrink(file, max = 1400) {
 const pidInUse = pid => data.library.some(e => e.pid === pid) || data.binders.some(b => b.pages.some(p => p.items.some(i => i.pid === pid)))
 async function releasePhoto(pid) { if (pid && !pidInUse(pid)) await forgetPhoto(pid) }
 async function hydratePhotos() {
+  $app.querySelectorAll('img[data-url]').forEach(img => { // link de imagem que falhe → espaço reservado
+    const fallback = () => { if (img.isConnected) img.outerHTML = img.dataset.ph }
+    if (img.complete && img.naturalWidth === 0) fallback(); else img.addEventListener('error', fallback, { once: true })
+  })
   await Promise.all([...$app.querySelectorAll('img[data-photo]')].map(async img => {
     const u = await photoUrl(img.dataset.photo)
     if (u && img.isConnected) img.src = u
@@ -879,12 +887,24 @@ function renderBinder() {
   const staleManual = c => !c.priceAt || Date.now() - c.priceAt > 30 * 864e5
   const sheetHtml = sel && sel.t === 'card' ? `
     <div class="sheet">
-      <p><strong>${esc(sel.name || (sel.hint && sel.hint.n) || 'Carta')}</strong> <small>${esc(sel.lang || (sel.hint && sel.hint.l) || '')}${priceOf(sel) != null ? ' · ' + eur(priceOf(sel)) : ''}${isManual(sel) ? ' · à mão' + (sel.priceAt ? ' em ' + new Date(sel.priceAt).toLocaleDateString('pt-PT') : '') + (staleManual(sel) ? ' ⚠ confirma o preço' : '') : ''}</small></p>
+      <p><strong>${esc(sel.name || (sel.hint && sel.hint.n) || 'Carta sem nome')}</strong> <small>${esc(sel.ref ? sel.ref + ' · ' : '')}${esc(sel.lang || (sel.hint && sel.hint.l) || '')}${priceOf(sel) != null ? ' · ' + eur(priceOf(sel)) : ''}${isManual(sel) ? ' · à mão' + (sel.priceAt ? ' em ' + new Date(sel.priceAt).toLocaleDateString('pt-PT') : '') + (staleManual(sel) ? ' ⚠ confirma o preço' : '') : ''}</small></p>
+      ${view.sheetEdit ? `<form id="shForm" class="sheet-form">
+        <input name="name" value="${esc(sel.name || '')}" placeholder="Nome da carta" />
+        ${sel.id ? '' : `<select name="lang">${LANGS.map(([c, n]) => `<option value="${c}" ${(sel.lang || data.lang) === c ? 'selected' : ''}>${n}</option>`).join('')}</select>`}
+        <input name="ref" value="${esc(sel.ref || '')}" placeholder="Set e número (opcional, ex.: SVP 001)" />
+        <input name="price" inputmode="decimal" value="${sel.price ?? ''}" placeholder="Preço em € (opcional)" />
+        <input name="url" value="${esc(sel.url || '')}" placeholder="Link de uma imagem (opcional)" />
+        <button class="primary-button">Guardar detalhes</button>
+        <label class="button-secondary">Escolher foto<input id="shPhoto" type="file" accept="image/*" hidden></label>
+        ${sel.pid ? '<button type="button" id="shNoPhoto" class="button-secondary">Tirar a minha foto</button>' : ''}
+        <button type="button" id="shEditClose" class="text-button">Cancelar</button>
+      </form>` : `
       ${sel.custom ? '' : '<button id="shLink" class="button-secondary">Ligar ao TCGdex</button>'}
+      <button id="shEdit" class="button-secondary">Editar detalhes</button>
       <button id="shPrice" class="button-secondary">Preço à mão</button>
-      <a class="button-secondary" target="_blank" rel="noopener" href="https://www.cardmarket.com/en/Pokemon/Products/Search?searchString=${encodeURIComponent(sel.name || (sel.hint && sel.hint.n) || '')}">Ver no Cardmarket</a>
+      <a class="button-secondary" target="_blank" rel="noopener" href="https://www.cardmarket.com/en/Pokemon/Products/Search?searchString=${encodeURIComponent([sel.name || (sel.hint && sel.hint.n) || '', sel.ref || ''].join(' ').trim())}">Ver no Cardmarket</a>
       <button id="shLib" class="button-secondary">Guardar na biblioteca</button>
-      <button id="shClose" class="text-button">Fechar</button>
+      <button id="shClose" class="text-button">Fechar</button>`}
     </div>` : ''
   const libHtml = view.edit ? `
     <h3 class="subhead">Biblioteca (cartas guardadas e personalizadas)</h3>
@@ -892,10 +912,12 @@ function renderBinder() {
     <div class="rgrid" id="lib">${data.library.map(e => `<div class="cell card owned libitem" data-lid="${e.lid}">${imgTag(e, e.name)}<small>${esc(e.name)}</small><button class="libdel" data-del="${e.lid}" aria-label="Remover da biblioteca">✕</button></div>`).join('')}</div>
     <button id="toggleNew" class="button-secondary">${view.newCard ? 'Cancelar' : '+ Nova carta personalizada'}</button>
     ${view.newCard ? `<form id="newCard" class="newcard">
-      <input name="name" placeholder="Nome da carta" required />
+      <input name="name" placeholder="Nome da carta" value="${esc(view.newName || '')}" required />
       <select name="lang">${LANGS.map(([c, n]) => `<option value="${c}" ${c === data.lang ? 'selected' : ''}>${n}</option>`).join('')}</select>
+      <input name="ref" placeholder="Set e número (opcional, ex.: SVP 001)" />
       <input name="price" inputmode="decimal" placeholder="Preço em € (opcional)" />
-      <label class="btn">Escolher foto<input name="photo" type="file" accept="image/*" required></label>
+      <input name="url" placeholder="Link de uma imagem (opcional)" />
+      <label class="btn">Foto (opcional)<input name="photo" type="file" accept="image/*"></label>
       <button>Guardar e adicionar à página</button>
     </form>` : ''}` : ''
 
@@ -923,6 +945,7 @@ function renderBinder() {
     ${view.edit ? `
       <div class="tools">
         <label class="btn">+ Fotos<input id="files" type="file" accept="image/*" multiple hidden></label>
+        <label class="btn">+ Cartas (fotos)<input id="cardFiles" type="file" accept="image/*" multiple hidden></label>
         <button id="addBlank">+ Slot vazio</button>
         <button id="goLink">Ligar cartas</button>
         <button id="addPage">+ Página</button>
@@ -932,6 +955,7 @@ function renderBinder() {
         <button id="pgRight" ${view.pageIdx === b.pages.length - 1 ? 'disabled' : ''}>Mover página ▶</button>
         <button id="delPage" class="danger">Apagar página</button>
       </div>
+      ${view.toolsMsg ? `<p class="hint">${esc(view.toolsMsg)}</p>` : ''}
       <details id="panel" ${view.panel ? 'open' : ''}>
         <summary>Adicionar carta</summary>
         <form id="search" class="row">
@@ -940,6 +964,7 @@ function renderBinder() {
           <button>Pesquisar</button>
         </form>
         <p class="hint">${esc(view.msg)}</p>
+        ${view.q && view.msg !== 'A pesquisar…' ? `<button id="createFromSearch" class="button-secondary">${view.results.length ? 'Não é nenhuma destas?' : 'Não encontras a carta?'} Criar "${esc(view.q)}" à mão</button>` : ''}
         <div class="rgrid" id="rgrid">
           ${view.results.map(c => `<div class="cell card owned res" data-id="${esc(c.id)}">
             <img src="${c.image}/low.webp" alt=""><small>${esc(c.name)}</small></div>`).join('')}
@@ -952,7 +977,7 @@ function renderBinder() {
   on('back', 'click', () => { view.page = 'binders'; render() })
   on('prev', 'click', () => { view.pageIdx--; view.sheet = null; render() })
   on('next', 'click', () => { view.pageIdx++; view.sheet = null; render() })
-  on('mode', 'click', () => { view.edit = !view.edit; view.sheet = null; render() })
+  on('mode', 'click', () => { view.edit = !view.edit; view.sheet = null; view.toolsMsg = ''; render() })
   on('eur', 'click', () => { view.showPrice = !view.showPrice; render() })
   on('goValue', 'click', () => { view.valueBack = 'binder'; view.page = 'value'; render() })
   on('goLink', 'click', () => startLink(b, null))
@@ -968,7 +993,7 @@ function renderBinder() {
       return
     }
     const act = btn.dataset.act
-    if (act === 'more') { view.sheet = i; return render() }
+    if (act === 'more') { view.sheet = i; view.sheetEdit = false; return render() }
     const next = [...pg.items]
     let removed = null
     if (act === 'del') {
@@ -989,6 +1014,25 @@ function renderBinder() {
     render()
   })
 
+  on('cardFiles', 'change', async e => {
+    let n = 0
+    for (const f of [...e.target.files]) {
+      try {
+        const { blob } = await shrink(f)
+        const pid = uid()
+        await storePhoto(pid, blob)
+        addItem(b, { t: 'card', custom: true, name: '', lang: data.lang || 'en', pid, owned: false })
+        n++
+      } catch { alert('Não consegui ler a foto ' + f.name) }
+    }
+    view.toolsMsg = n ? `${n} carta${n === 1 ? '' : 's'} adicionada${n === 1 ? '' : 's'}. Toca em ⋯ para lhes dar nome, língua e preço.` : ''
+    render()
+  })
+  on('createFromSearch', 'click', () => {
+    Object.assign(view, { newCard: true, newName: view.q, panel: true })
+    render()
+    setTimeout(() => { const f = document.getElementById('newCard'); if (f && f.scrollIntoView) f.scrollIntoView({ behavior: 'smooth', block: 'center' }) }, 60)
+  })
   on('files', 'change', async e => {
     for (const f of [...e.target.files]) {
       try {
@@ -1058,6 +1102,30 @@ function renderBinder() {
   // folha de opções da carta (botão ⋯)
   on('shClose', 'click', () => { view.sheet = null; render() })
   on('shLink', 'click', () => startLink(b, sel))
+  on('shEdit', 'click', () => { view.sheetEdit = true; render() })
+  on('shEditClose', 'click', () => { view.sheetEdit = false; render() })
+  on('shForm', 'submit', e => {
+    e.preventDefault()
+    const f = new FormData(e.target)
+    const price = Number(String(f.get('price')).replace(',', '.')), before = sel.price
+    sel.name = String(f.get('name')).trim(); sel.ref = String(f.get('ref')).trim(); sel.url = String(f.get('url')).trim()
+    if (!sel.id && f.get('lang')) sel.lang = f.get('lang')
+    for (const k of ['name', 'ref', 'url']) if (!sel[k]) delete sel[k]
+    if (price > 0) { if (price !== before) sel.priceAt = Date.now(); sel.price = price } else { delete sel.price; delete sel.priceAt }
+    view.sheetEdit = false; save(); render()
+  })
+  on('shPhoto', 'change', async e => {
+    const file = e.target.files[0]; if (!file) return
+    try {
+      const { blob } = await shrink(file)
+      const pid = uid(), old = sel.pid
+      await storePhoto(pid, blob)
+      sel.pid = pid; save()
+      if (old) await releasePhoto(old)
+      render()
+    } catch { alert('Não consegui ler a foto.') }
+  })
+  on('shNoPhoto', 'click', async () => { const old = sel.pid; delete sel.pid; save(); await releasePhoto(old); render() })
   on('shPrice', 'click', () => {
     const v = prompt('Preço desta carta em euros (ex.: 12,50). Deixa vazio para remover.', sel.price ?? '')
     if (v === null) return
@@ -1069,32 +1137,32 @@ function renderBinder() {
     view.sheet = null; save(); render()
   })
   on('shLib', 'click', () => {
-    const dup = data.library.some(e => (sel.pid && e.pid === sel.pid) || (sel.src && e.src === sel.src) || (sel.id && e.tid === sel.id && e.lang === sel.lang))
+    const dup = data.library.some(e => (sel.pid && e.pid === sel.pid) || (sel.src && e.src === sel.src) || (sel.id && e.tid === sel.id && e.lang === sel.lang) ||
+      (!sel.id && !sel.src && !sel.pid && !e.tid && !e.src && !e.pid && e.name === sel.name && (e.lang || '') === (sel.lang || '') && (e.ref || '') === (sel.ref || '')))
     if (dup) { view.sheet = null; render(); return alert('Esta carta já está na biblioteca.') }
     const name = prompt('Nome da carta na biblioteca:', sel.name || (sel.hint && sel.hint.n) || '')
     if (name === null) return
-    data.library.push({ lid: uid(), name: name.trim() || 'Carta', lang: sel.lang || (sel.hint && sel.hint.l) || 'en', price: sel.price, priceAt: sel.priceAt, pid: sel.pid, src: sel.src, image: sel.image, tid: sel.id })
+    data.library.push({ lid: uid(), name: name.trim() || 'Carta', lang: sel.lang || (sel.hint && sel.hint.l) || 'en', ref: sel.ref, url: sel.url, price: sel.price, priceAt: sel.priceAt, pid: sel.pid, src: sel.src, image: sel.image, tid: sel.id })
     view.sheet = null; view.panel = true; save(); render()
     alert('Guardada na biblioteca. Em qualquer binder: Editar → Adicionar carta → Biblioteca.')
   })
 
   // biblioteca e cartas personalizadas (com a tua foto)
-  on('toggleNew', 'click', () => { view.newCard = !view.newCard; view.panel = true; render() })
+  on('toggleNew', 'click', () => { view.newCard = !view.newCard; view.newName = ''; view.panel = true; render() })
   on('newCard', 'submit', async e => {
     e.preventDefault()
     const f = new FormData(e.target)
     const file = f.get('photo'), name = String(f.get('name')).trim()
-    if (!name || !file || !file.size) return alert('Escreve o nome e escolhe uma foto.')
+    if (!name) return alert('Escreve o nome da carta.')
     try {
-      const { blob } = await shrink(file)
-      const pid = uid()
-      await storePhoto(pid, blob)
+      let pid
+      if (file && file.size) { const { blob } = await shrink(file); pid = uid(); await storePhoto(pid, blob) }
       const price = Number(String(f.get('price')).replace(',', '.')) || undefined
-      const lang = f.get('lang')
-      const priceAt = price ? Date.now() : undefined
-      data.library.push({ lid: uid(), name, lang, price, priceAt, pid })
-      addItem(b, { t: 'card', custom: true, name, lang, price, priceAt, pid, owned: false })
-      Object.assign(view, { newCard: false, panel: true, msg: `Adicionada: ${name} (página ${view.pageIdx + 1})` })
+      const lang = f.get('lang'), priceAt = price ? Date.now() : undefined
+      const ref = String(f.get('ref')).trim() || undefined, url = String(f.get('url')).trim() || undefined
+      data.library.push({ lid: uid(), name, lang, ref, url, price, priceAt, pid })
+      addItem(b, { t: 'card', custom: true, name, lang, ref, url, price, priceAt, pid, owned: false })
+      Object.assign(view, { newCard: false, newName: '', panel: true, msg: `Adicionada: ${name} (página ${view.pageIdx + 1})` })
       save(); render()
     } catch { alert('Não consegui guardar a foto.') }
   })
@@ -1110,7 +1178,7 @@ function renderBinder() {
     }
     const el = e.target.closest('.libitem'); if (!el) return
     const ent = data.library.find(x => x.lid === el.dataset.lid)
-    addItem(b, { t: 'card', owned: false, custom: !ent.tid, name: ent.name, lang: ent.lang, price: ent.price, priceAt: ent.priceAt, pid: ent.pid, src: ent.src, image: ent.image, id: ent.tid })
+    addItem(b, { t: 'card', owned: false, custom: !ent.tid, name: ent.name, lang: ent.lang, ref: ent.ref, url: ent.url, price: ent.price, priceAt: ent.priceAt, pid: ent.pid, src: ent.src, image: ent.image, id: ent.tid })
     Object.assign(view, { panel: true, msg: `Adicionada: ${ent.name} (página ${view.pageIdx + 1})` })
     render()
   })
@@ -1227,7 +1295,7 @@ function renderValue() {
   const upds = Object.values(data.prices).map(p => p.upd).filter(Boolean).sort()
   const manualCards = data.binders.flatMap(cardsOf).filter(c => c.price > 0 && !(c.id && data.prices[pkey(c)] && data.prices[pkey(c)].v != null))
   const oldManual = manualCards.filter(c => !c.priceAt || Date.now() - c.priceAt > 30 * 864e5).length
-  const noPriceCards = data.binders.flatMap(cardsOf).filter(c => c.id && priceOf(c) == null)
+  const noPriceCards = data.binders.flatMap(cardsOf).filter(c => (c.id || c.custom) && priceOf(c) == null)
   const langName = l => (LANGS.find(([c]) => c === l) || [l, l])[1]
   const byLang = {}
   for (const c of noPriceCards) byLang[c.lang || 'en'] = (byLang[c.lang || 'en'] || 0) + 1
@@ -1246,8 +1314,8 @@ function renderValue() {
       <span class="binder-meta">${r.linked}/${r.linkable} cartas ligadas${r.noPrice ? ` · ${r.noPrice} sem preço` : ''}</span>
     </div>`).join('')}</section>
     ${noPriceCards.length ? `<section class="section-block"><div class="section-heading"><div><p class="eyebrow">Atenção</p><h2>Sem preço (${noPriceCards.length})</h2></div></div>
-      <p class="hint">${Object.keys(data.prices).length ? `O TCGdex não devolveu preço para estas cartas ligadas (${esc(noPriceNote)}). Podes escrever o preço à mão.` : 'Carrega primeiro em "Atualizar preços". As que continuarem aqui não têm preço no TCGdex.'}</p>
-      ${noPriceShown.map((c, i) => `<div class="vrow">${imgTag(c)}<span>${esc(c.name || (c.hint && c.hint.n) || 'Carta')} <small>${esc(langName(c.lang || 'en'))}</small></span><button class="button-secondary" data-nopricei="${i}">Preço à mão</button></div>`).join('')}
+      <p class="hint">${Object.keys(data.prices).length ? `Estas cartas ainda não têm preço (${esc(noPriceNote)}): o TCGdex não o devolveu, ou ainda não o escreveste. Podes escrever à mão.` : 'Carrega primeiro em "Atualizar preços". As que continuarem aqui não têm preço no TCGdex, ou são cartas tuas.'}</p>
+      ${noPriceShown.map((c, i) => `<div class="vrow">${imgTag(c)}<span>${esc(c.name || (c.hint && c.hint.n) || 'Carta sem nome')} <small>${esc(langName(c.lang || 'en'))}</small></span><button class="button-secondary" data-nopricei="${i}">Preço à mão</button></div>`).join('')}
       ${noPriceCards.length > noPriceShown.length ? `<p class="hint">E mais ${noPriceCards.length - noPriceShown.length} cartas.</p>` : ''}</section>` : ''}
     ${top.length ? `<section class="section-block"><div class="section-heading"><div><p class="eyebrow">Top 10</p><h2>${ownedCards.length ? 'Mais valiosas (adquiridas)' : 'Mais valiosas'}</h2></div></div>${top.map(c => `
       <div class="vrow">${imgTag(c)}<span>${esc(c.name || (c.hint && c.hint.n) || 'Carta')} <small>${esc(c.lang || 'en')}</small></span><strong>${eur(priceOf(c))}</strong></div>`).join('')}</section>` : ''}`
