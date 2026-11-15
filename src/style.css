@@ -477,3 +477,15 @@ a.button-secondary { display: inline-block; text-decoration: none; text-align: c
 label.button-secondary { display: inline-block; text-align: center; cursor: pointer; }
 .card-ph small { position: static; background: none; padding: 0; }
 .row select { width: auto; max-width: 44%; flex: none; }
+
+/* importar listas e biblioteca grande */
+.lib-actions { display: flex; flex-wrap: wrap; gap: 8px; margin: 12px 0; }
+.import-form { display: grid; gap: 8px; margin: 8px 0; }
+.import-form textarea { min-height: 110px; resize: vertical; font-family: inherit; }
+.import-btns { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+#libSearch { margin: 6px 0 10px; }
+#libWrap .primary-button { margin: 8px 0; width: 100%; }
+#libSearch, .import-form textarea { width: 100%; padding: 12px 13px; border-radius: 12px; border: 1px solid #d9d9dd; background: #fff; color: #1c1c1f; font: inherit; }
+:root[data-theme="dark"] #libSearch, :root[data-theme="dark"] .import-form textarea { background: #1a1a1c; border-color: #2a2b2e; color: #f4f4f5; }
+#search, #lform { flex-wrap: wrap; }
+#search input, #lform input { flex: 1 1 130px; min-width: 130px; }

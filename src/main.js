@@ -359,6 +359,63 @@ async function loadSeedJson() {
   return (await fetch(`${BASE}seed/binder.json`)).json() // desenvolvimento: ficheiro local
 }
 
+/* ---------- importar listas de cartas (texto ou CSV) ---------- */
+function splitLine(line, sep) {
+  const out = []; let cur = '', q = false
+  for (let i = 0; i < line.length; i++) {
+    const ch = line[i]
+    if (ch === '"') { if (q && line[i + 1] === '"') { cur += '"'; i++ } else q = !q }
+    else if (ch === sep && !q) { out.push(cur.trim()); cur = '' }
+    else cur += ch
+  }
+  out.push(cur.trim())
+  return out
+}
+function normLang(raw) {
+  const t = String(raw || '').trim().toLowerCase()
+  if (!t) return data.lang || 'en'
+  if (LANGS.some(([c]) => c === t)) return t
+  if (/simpl|zh-?cn|chs/.test(t)) return 'zh-cn'
+  if (/trad|zh-?tw|cht|taiwan/.test(t)) return 'zh-tw'
+  if (/chin|zh/.test(t)) return 'zh-cn'
+  if (/^(ja|jp)|jap|jpn/.test(t)) return 'ja'
+  if (/^ko|cor|kor/.test(t)) return 'ko'
+  if (/^en|ingl|eng/.test(t)) return 'en'
+  if (/^fr|fran/.test(t)) return 'fr'
+  if (/^de|alem|ger/.test(t)) return 'de'
+  if (/^es|espan|spa/.test(t)) return 'es'
+  if (/^it|ital/.test(t)) return 'it'
+  if (/^pt|portu/.test(t)) return 'pt'
+  return data.lang || 'en'
+}
+function parseCardList(text) {
+  const lines = String(text).split(/\r?\n/).map(l => l.trim()).filter(Boolean)
+  if (!lines.length) return []
+  const sepOf = l => (l.includes('\t') ? '\t' : l.includes(';') ? ';' : ',')
+  const syn = { name: ['nome', 'name', 'carta', 'card'], lang: ['lang', 'lingua', 'língua', 'idioma', 'language'], ref: ['ref', 'set', 'numero', 'número', 'number', 'set e número', 'set e numero'], price: ['price', 'preco', 'preço', 'valor'], url: ['url', 'link', 'imagem', 'image'] }
+  let map = { name: 0, lang: 1, ref: 2, price: 3, url: 4 }, start = 0
+  const first = splitLine(lines[0], sepOf(lines[0])).map(c => c.toLowerCase())
+  if (first.some(c => syn.name.includes(c)) && first.length > 1 && first.some(c => [...syn.lang, ...syn.ref, ...syn.price, ...syn.url].includes(c))) {
+    map = {}
+    for (const [k, names] of Object.entries(syn)) { const i = first.findIndex(c => names.includes(c)); if (i >= 0) map[k] = i }
+    start = 1
+  }
+  const out = []
+  for (const line of lines.slice(start)) {
+    const c = splitLine(line, sepOf(line))
+    const name = (c[map.name] || '').trim()
+    if (!name) continue
+    const priceRaw = Number(String(c[map.price] ?? '').replace(/[€\s]/g, '').replace(',', '.'))
+    const item = { name, lang: normLang(c[map.lang]) }
+    const ref = (c[map.ref] || '').trim(), url = (c[map.url] || '').trim()
+    if (ref) item.ref = ref
+    if (/^https?:\/\//i.test(url)) item.url = url
+    if (priceRaw > 0) { item.price = priceRaw; item.priceAt = Date.now() }
+    out.push(item)
+  }
+  return out
+}
+
 /* ---------- backup (exportar e importar) ---------- */
 const blobToDataUrl = blob => new Promise((resolve, reject) => { const r = new FileReader(); r.onload = () => resolve(r.result); r.onerror = reject; r.readAsDataURL(blob) })
 async function exportBackup() {
@@ -894,6 +951,7 @@ function renderBinder() {
         <input name="ref" value="${esc(sel.ref || '')}" placeholder="Set e número (opcional, ex.: SVP 001)" />
         <input name="price" inputmode="decimal" value="${sel.price ?? ''}" placeholder="Preço em € (opcional)" />
         <input name="url" value="${esc(sel.url || '')}" placeholder="Link de uma imagem (opcional)" />
+        <p class="hint">Dica: procura a imagem (botão "Procurar imagem"), mantém o dedo nela e escolhe "Copiar endereço da imagem". Ou guarda-a no telemóvel e usa "Escolher foto".</p>
         <button class="primary-button">Guardar detalhes</button>
         <label class="button-secondary">Escolher foto<input id="shPhoto" type="file" accept="image/*" hidden></label>
         ${sel.pid ? '<button type="button" id="shNoPhoto" class="button-secondary">Tirar a minha foto</button>' : ''}
@@ -902,21 +960,43 @@ function renderBinder() {
       ${sel.custom ? '' : '<button id="shLink" class="button-secondary">Ligar ao TCGdex</button>'}
       <button id="shEdit" class="button-secondary">Editar detalhes</button>
       <button id="shPrice" class="button-secondary">Preço à mão</button>
+      <a class="button-secondary" target="_blank" rel="noopener" href="https://www.google.com/search?tbm=isch&q=${encodeURIComponent(['pokemon card', sel.name || (sel.hint && sel.hint.n) || '', sel.ref || '', langLabel(sel.lang || '')].join(' ').trim())}">Procurar imagem</a>
       <a class="button-secondary" target="_blank" rel="noopener" href="https://www.cardmarket.com/en/Pokemon/Products/Search?searchString=${encodeURIComponent([sel.name || (sel.hint && sel.hint.n) || '', sel.ref || ''].join(' ').trim())}">Ver no Cardmarket</a>
       <button id="shLib" class="button-secondary">Guardar na biblioteca</button>
       <button id="shClose" class="text-button">Fechar</button>`}
     </div>` : ''
+  const libMatches = () => {
+    const q = (view.libQ || '').trim().toLowerCase()
+    return data.library.filter(e => !q || (e.name || '').toLowerCase().includes(q) || (e.ref || '').toLowerCase().includes(q))
+  }
+  const libWrapHtml = () => {
+    const all = libMatches(), shown = all.slice(0, view.libLimit || 60)
+    return `<div class="rgrid" id="lib">${shown.map(e => `<div class="cell card owned libitem" data-lid="${e.lid}">${imgTag(e, e.name)}<small>${esc(e.name || 'Carta')}${e.ref ? ' · ' + esc(e.ref) : ''}</small><button class="libdel" data-del="${e.lid}" aria-label="Remover da biblioteca">✕</button></div>`).join('')}</div>
+      ${all.length > shown.length ? `<button id="libMore" class="button-secondary">Mostrar mais (${all.length - shown.length})</button>` : ''}
+      ${view.libQ && all.length ? `<button id="libAddAll" class="primary-button">Adicionar estas ${all.length} ao binder</button>` : ''}
+      ${!all.length && data.library.length ? '<p class="hint">Nenhuma carta com esse nome.</p>' : ''}`
+  }
   const libHtml = view.edit ? `
-    <h3 class="subhead">Biblioteca (cartas guardadas e personalizadas)</h3>
-    <p class="hint">${data.library.length ? 'Toca numa carta para a adicionar à página atual.' : 'Ainda está vazia. Guarda cartas dos teus binders (botão ⋯) ou cria uma com a tua foto.'}</p>
-    <div class="rgrid" id="lib">${data.library.map(e => `<div class="cell card owned libitem" data-lid="${e.lid}">${imgTag(e, e.name)}<small>${esc(e.name)}</small><button class="libdel" data-del="${e.lid}" aria-label="Remover da biblioteca">✕</button></div>`).join('')}</div>
-    <button id="toggleNew" class="button-secondary">${view.newCard ? 'Cancelar' : '+ Nova carta personalizada'}</button>
+    <h3 class="subhead">Biblioteca (${data.library.length})</h3>
+    <p class="hint">${data.library.length ? 'Toca numa carta para a adicionar à página atual.' : 'Ainda está vazia. Cria cartas à mão, guarda as dos teus binders (botão ⋯) ou importa uma lista.'}</p>
+    ${data.library.length > 6 ? `<input id="libSearch" class="pk-input" type="search" placeholder="Pesquisar na biblioteca (nome ou número)" value="${esc(view.libQ || '')}" autocomplete="off">` : ''}
+    <div id="libWrap">${libWrapHtml()}</div>
+    ${view.libMsg ? `<p class="hint">${esc(view.libMsg)}</p>` : ''}
+    <div class="lib-actions"><button id="toggleNew" class="button-secondary">${view.newCard ? 'Cancelar' : '+ Nova carta'}</button><button id="toggleImport" class="button-secondary">${view.importOpen ? 'Fechar importação' : 'Importar lista'}</button></div>
+    ${view.importOpen ? `<form id="importForm" class="import-form">
+      <p class="hint">Uma carta por linha, separada por ponto e vírgula: <strong>nome; língua; set e número; preço; link da imagem</strong>. Só o nome é obrigatório. Também aceita ficheiros CSV com cabeçalho (nome, lingua, set, preco, link).</p>
+      <p class="hint">Exemplo:<br>Roy's Fuecoco; chinês simplificado; SVP 002; 45<br>Pikachu; japonês; 025/071</p>
+      <textarea name="list" rows="6" class="pk-input" placeholder="Cola aqui a lista…"></textarea>
+      <label class="only"><input type="checkbox" name="toBinder" checked> Adicionar também a este binder</label>
+      <div class="import-btns"><button class="primary-button">Importar</button><label class="button-secondary">Abrir ficheiro<input id="importFile" type="file" accept=".csv,.txt,text/csv,text/plain" hidden></label></div>
+    </form>` : ''}
     ${view.newCard ? `<form id="newCard" class="newcard">
       <input name="name" placeholder="Nome da carta" value="${esc(view.newName || '')}" required />
       <select name="lang">${LANGS.map(([c, n]) => `<option value="${c}" ${c === data.lang ? 'selected' : ''}>${n}</option>`).join('')}</select>
       <input name="ref" placeholder="Set e número (opcional, ex.: SVP 001)" />
       <input name="price" inputmode="decimal" placeholder="Preço em € (opcional)" />
       <input name="url" placeholder="Link de uma imagem (opcional)" />
+      <p class="hint">Dica: procura a imagem no Google, mantém o dedo nela e escolhe "Copiar endereço da imagem".</p>
       <label class="btn">Foto (opcional)<input name="photo" type="file" accept="image/*"></label>
       <button>Guardar e adicionar à página</button>
     </form>` : ''}` : ''
@@ -1087,7 +1167,7 @@ function renderBinder() {
     try {
       const { list, via, native } = await searchCards(lang, q)
       view.results = list.slice(0, 120)
-      view.msg = view.results.length ? 'Toca numa carta para a adicionar à página atual.' + viaNote(via, native) : 'Sem resultados nesta língua. Tenta o nome em inglês ou na língua da carta.'
+      view.msg = view.results.length ? 'Toca numa carta para a adicionar à página atual.' + viaNote(via, native) : 'Sem resultados nesta língua. Tenta o nome em inglês ou na língua da carta.' + zhNote(lang)
     } catch { view.msg = 'Erro ao pesquisar.' }
     renderBinder()
   })
@@ -1166,7 +1246,18 @@ function renderBinder() {
       save(); render()
     } catch { alert('Não consegui guardar a foto.') }
   })
-  on('lib', 'click', async e => {
+  const entryToItem = ent => ({ t: 'card', owned: false, custom: !ent.tid, name: ent.name, lang: ent.lang, ref: ent.ref, url: ent.url, price: ent.price, priceAt: ent.priceAt, pid: ent.pid, src: ent.src, image: ent.image, id: ent.tid })
+  const paintLib = () => { const w = document.getElementById('libWrap'); if (w) w.innerHTML = libWrapHtml() }
+  on('libSearch', 'input', e => { view.libQ = e.target.value; view.libLimit = 60; paintLib() })
+  on('libWrap', 'click', async e => {
+    if (e.target.closest('#libMore')) { view.libLimit = (view.libLimit || 60) + 60; return paintLib() }
+    if (e.target.closest('#libAddAll')) {
+      const list = libMatches()
+      if (!confirm(`Adicionar ${list.length} carta(s) da biblioteca ao binder "${b.name}"?`)) return
+      list.forEach(ent => addItem(b, entryToItem(ent)))
+      Object.assign(view, { panel: true, libMsg: `${list.length} carta(s) adicionada(s) ao binder.` })
+      return render()
+    }
     const del = e.target.closest('.libdel')
     if (del) {
       if (!confirm('Remover esta carta da biblioteca? (não sai dos binders onde já está)')) return
@@ -1174,12 +1265,32 @@ function renderBinder() {
       data.library = data.library.filter(x => x.lid !== del.dataset.del)
       save()
       if (gone && gone.pid) await releasePhoto(gone.pid)
-      view.panel = true; render(); return
+      view.panel = true; return render()
     }
     const el = e.target.closest('.libitem'); if (!el) return
     const ent = data.library.find(x => x.lid === el.dataset.lid)
-    addItem(b, { t: 'card', owned: false, custom: !ent.tid, name: ent.name, lang: ent.lang, ref: ent.ref, url: ent.url, price: ent.price, priceAt: ent.priceAt, pid: ent.pid, src: ent.src, image: ent.image, id: ent.tid })
-    Object.assign(view, { panel: true, msg: `Adicionada: ${ent.name} (página ${view.pageIdx + 1})` })
+    addItem(b, entryToItem(ent))
+    Object.assign(view, { panel: true, libMsg: '', msg: `Adicionada: ${ent.name || 'carta'} (página ${view.pageIdx + 1})` })
+    render()
+  })
+  on('toggleImport', 'click', () => { view.importOpen = !view.importOpen; view.panel = true; render() })
+  on('importFile', 'change', async e => { const f = e.target.files[0]; if (f) document.querySelector('#importForm textarea').value = await f.text() })
+  on('importForm', 'submit', e => {
+    e.preventDefault()
+    const f = new FormData(e.target)
+    const cards = parseCardList(String(f.get('list')))
+    if (!cards.length) return alert('Não encontrei nenhuma carta na lista.')
+    if (cards.length > 300 && !confirm(`A lista tem ${cards.length} cartas. Importar todas?`)) return
+    let added = 0, dups = 0
+    const toBinder = f.get('toBinder')
+    for (const c of cards) {
+      const same = data.library.find(x => !x.tid && (x.name || '').toLowerCase() === c.name.toLowerCase() && x.lang === c.lang && (x.ref || '') === (c.ref || ''))
+      const ent = same || { lid: uid(), ...c }
+      if (same) dups++; else { data.library.push(ent); added++ }
+      if (toBinder) addItem(b, entryToItem(ent))
+    }
+    save()
+    Object.assign(view, { importOpen: false, panel: true, libQ: '', libMsg: `${cards.length} carta(s) lidas: ${added} nova(s) na biblioteca${dups ? `, ${dups} já existia(m)` : ''}${toBinder ? ', todas adicionadas a este binder' : ''}.` })
     render()
   })
 
@@ -1193,7 +1304,7 @@ async function listCards(lang, q) {
 }
 // nomes oficiais de cada Pokémon em várias línguas (PokéAPI, gratuita)
 const POKEAPI = 'https://pokeapi.co/api/v2/pokemon-species/'
-const PK_LANG = { ja: ['ja-Hrkt', 'ja'], 'zh-cn': ['zh-Hans'], 'zh-tw': ['zh-Hant'], ko: ['ko'], fr: ['fr'], de: ['de'], es: ['es'], it: ['it'] }
+const PK_LANG = { ja: ['ja-Hrkt', 'ja'], 'zh-cn': ['zh-Hans', 'zh-Hant'], 'zh-tw': ['zh-Hant'], ko: ['ko'], fr: ['fr'], de: ['de'], es: ['es'], it: ['it'] }
 const NOISE = new Set(['v', 'vmax', 'vstar', 'vunion', 'ex', 'gx', 'tag', 'team', 'mega', 'hisuian', 'galarian', 'alolan', 'paldean', 'origin', 'forme', 'rapid', 'strike', 'single', 'radiant', 'the', 'of', 'and', '&'])
 const SUFFIX = { v: 'V', vmax: 'VMAX', vstar: 'VSTAR', ex: 'ex', gx: 'GX' }
 const speciesCache = new Map()
@@ -1213,22 +1324,23 @@ async function translateName(lang, q) {
   const suffix = SUFFIX[words[words.length - 1]] || ''
   for (const w of words.filter(w => !NOISE.has(w)).slice(0, 4)) {
     const names = await speciesNames(w.replace(/'s$/, '').replace(/['.]/g, ''))
-    const native = names && (PK_LANG[lang] || []).map(k => names[k]).find(Boolean)
-    if (native) return native + suffix
+    const found = names ? [...new Set((PK_LANG[lang] || []).map(k => names[k]).filter(Boolean))] : []
+    if (found.length) return found.map(n => n + suffix)
   }
-  return null
+  return []
 }
 // devolve { list, via, native }: 'nome' = como escreveste; 'traducao' = nome inglês traduzido para a língua escolhida
 async function searchCards(lang, q) {
   const direct = await listCards(lang, q)
   if (direct.length || lang === 'en') return { list: direct, via: 'nome' }
-  const native = await translateName(lang, q)
-  if (native) {
+  for (const native of await translateName(lang, q)) {
     const list = await listCards(lang, native)
     if (list.length) return { list, via: 'traducao', native }
   }
   return { list: [], via: null }
 }
+const langLabel = l => (LANGS.find(([c]) => c === l) || [l, l])[1]
+const zhNote = lang => (lang === 'zh-cn' ? ' O TCGdex ainda não tem chinês simplificado: só aparecem cartas em chinês tradicional. Podes criar a carta à mão.' : '')
 const viaNote = (via, native) => (via === 'traducao' ? ` (nome inglês traduzido para ${native})` : '')
 
 /* ---------- preços (Cardmarket via TCGdex) ---------- */
@@ -1360,7 +1472,7 @@ async function linkSearch() {
     const { list, via, native } = await searchCards(L.lang, L.q)
     if (tok !== L.token) return
     L.results = list.slice(0, 120)
-    L.msg = L.results.length ? 'Toca na carta igual à tua.' + viaNote(via, native) : 'Sem resultados: tenta o nome em inglês ou na língua da carta.'
+    L.msg = L.results.length ? 'Toca na carta igual à tua.' + viaNote(via, native) : 'Sem resultados: tenta o nome em inglês ou na língua da carta.' + zhNote(L.lang)
   } catch { if (tok !== L.token) return; L.msg = 'Erro ao pesquisar.' }
   if (view.page === 'link') renderLink()
 }
