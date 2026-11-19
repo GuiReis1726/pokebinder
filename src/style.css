@@ -489,3 +489,97 @@ label.button-secondary { display: inline-block; text-align: center; cursor: poin
 :root[data-theme="dark"] #libSearch, :root[data-theme="dark"] .import-form textarea { background: #1a1a1c; border-color: #2a2b2e; color: #f4f4f5; }
 #search, #lform { flex-wrap: wrap; }
 #search input, #lform input { flex: 1 1 130px; min-width: 130px; }
+
+/* =========================================================
+   LAYOUT RESPONSIVO — telemóvel, tablet e computador
+   ========================================================= */
+
+/* ---- telemóvel: o formulário de criar binder nunca sai do ecrã ---- */
+.create-binder-row { display: grid; grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr) minmax(0, 1.1fr); gap: 8px; align-items: center; }
+.create-binder-row > input { grid-column: 1 / -1; min-width: 0; }
+.create-binder-row select, .create-binder-row .primary-button { width: 100%; min-width: 0; }
+.create-binder-row > span { text-align: center; }
+
+/* ---- pormenores gerais ---- */
+:focus-visible { outline: 2px solid #ee6c2d; outline-offset: 2px; }
+.hub-card, .binder, .team-row, .pk-cell, .chip, .button-secondary, .primary-button { transition: background .15s, border-color .15s, transform .15s, box-shadow .15s; }
+@media (hover: hover) {
+  .hub-card:hover, .binder:hover, .team-row:hover { border-color: #ee6c2d; transform: translateY(-2px); }
+  .pk-cell:not(.taken):hover { border-color: #ee6c2d; }
+  .chip:hover:not(.on) { border-color: #ee6c2d; }
+  .primary-button:hover { filter: brightness(1.07); }
+  .cell.card:hover { cursor: pointer; }
+}
+
+/* ---- tablet (600 a 899 px): barra em baixo, mais largura ---- */
+@media (min-width: 600px) {
+  body, .bottom-nav { max-width: 780px; }
+  .screen { padding-inline: 40px; }
+  .app-header { padding-inline: 40px; }
+  .binder-list { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+
+/* ---- computador (900 px ou mais): barra lateral + conteúdo largo ---- */
+@media (min-width: 900px) {
+  body { max-width: none; margin: 0; padding: 0 0 56px 264px; }
+  .app-header { position: fixed; z-index: 11; top: 0; left: 0; width: 264px; height: 88px; padding: 0 26px; justify-content: flex-start; background: #fff; backdrop-filter: none; border-right: 1px solid #ececee; }
+  :root[data-theme="dark"] .app-header { background: #18191a; border-color: #232426; }
+  .brand { font-size: 18px; letter-spacing: .02em; }
+  .bottom-nav { top: 88px; right: auto; bottom: 0; left: 0; display: flex; flex-direction: column; align-items: stretch; justify-content: flex-start; gap: 4px; width: 264px; max-width: none; margin: 0; padding: 8px 14px 24px; border-top: 0; border-right: 1px solid #ececee; background: #fff; backdrop-filter: none; }
+  :root[data-theme="dark"] .bottom-nav { border-color: #232426; background: #18191a; }
+  .bottom-nav button, .bottom-nav .home-tab { flex-direction: row; justify-content: flex-start; gap: 14px; margin: 0; padding: 13px 16px; border-radius: 14px; background: transparent; box-shadow: none; color: #85868b; font-size: 15px; font-weight: 700; transition: background .15s, color .15s; }
+  .bottom-nav .home-tab { order: -1; }
+  .bottom-nav svg, .bottom-nav .home-tab svg { width: 22px; height: 22px; }
+  .bottom-nav button:hover, .bottom-nav .home-tab:hover { background: #f1f1f3; color: #202225; }
+  .bottom-nav button.active, .bottom-nav .home-tab.active { background: #fdeee9; color: #ed4b22; }
+  :root[data-theme="dark"] .bottom-nav button, :root[data-theme="dark"] .bottom-nav .home-tab { color: #9c9da1; }
+  :root[data-theme="dark"] .bottom-nav button:hover, :root[data-theme="dark"] .bottom-nav .home-tab:hover { background: #222325; color: #efeff1; }
+  :root[data-theme="dark"] .bottom-nav button.active, :root[data-theme="dark"] .bottom-nav .home-tab.active { background: #2b1e19; color: #f88f75; }
+
+  .screen { max-width: 1120px; margin: 0 auto; padding: 30px 48px 24px; }
+  .page-intro h1 { font-size: 38px; }
+  .page-binder, .page-value, .page-link { max-width: 900px; }
+  .page-profile { max-width: 820px; }
+  .page-rate, .page-teamEdit { max-width: 900px; }
+
+  /* início: duas colunas */
+  .page-dashboard { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); column-gap: 40px; align-items: start; }
+  .page-dashboard > .welcome, .page-dashboard > .collection-banner { grid-column: 1 / -1; }
+  /* calendário: calendário à esquerda, dia e formulário à direita */
+  .page-calendar { display: grid; grid-template-columns: minmax(0, 1.15fr) minmax(0, 1fr); column-gap: 40px; align-items: start; }
+  .page-calendar > .page-intro { grid-column: 1 / -1; }
+  .page-calendar > .calendar-card { grid-column: 1; grid-row: 2 / span 2; }
+  .page-calendar > .section-block { grid-column: 2; }
+  /* notas: formulário fixo à esquerda, lista à direita */
+  .page-notes { display: grid; grid-template-columns: 400px minmax(0, 1fr); column-gap: 40px; align-items: start; }
+  .page-notes > .page-intro { grid-column: 1 / -1; }
+  .page-notes > section:nth-of-type(2) { position: sticky; top: 24px; }
+  /* menu Pokémon: três cartões grandes */
+  .page-pokemon .hub-list { grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 18px; }
+  .hub-card { flex-direction: column; align-items: flex-start; gap: 18px; min-height: 200px; padding: 24px; }
+  .hub-card .hub-arrow { margin-top: auto; align-self: flex-end; }
+  /* binders */
+  .page-binders .create-binder-card { max-width: 560px; }
+  .binder-list { grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap: 16px; }
+  /* binder aberto: página maior, centrada */
+  .page-binder .page { max-width: 680px; margin-inline: auto; }
+  /* equipas */
+  .page-team .pk { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); column-gap: 32px; align-items: start; }
+  .page-team .pk > .back-button, .page-team .pk > .page-intro { grid-column: 1 / -1; justify-self: start; }
+  .page-teamEdit .team-grid { grid-template-columns: repeat(6, minmax(0, 1fr)); }
+  .page-teamEdit .slot { min-height: 160px; }
+  .page-teamEdit .slot-art { width: 100px; height: 100px; }
+  .pk-grid { grid-template-columns: repeat(auto-fill, minmax(96px, 1fr)); }
+  /* classificar e favoritos */
+  .page-rate .rate-card { max-width: 560px; margin-inline: auto; }
+  .hall { grid-template-columns: repeat(5, minmax(0, 1fr)); }
+  .page-profile .section-block, .page-value .section-block { max-width: none; }
+}
+@media (min-width: 1500px) {
+  .screen { max-width: 1280px; }
+  .page-binder, .page-value, .page-link { max-width: 960px; }
+}
+@media (min-width: 900px) {
+  body:has(main.login) { padding-left: 0; }
+  .login { max-width: 440px; padding-top: 8vh; }
+}

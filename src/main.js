@@ -93,7 +93,7 @@ function renderShell(content, active) {
         <img class="brand-logo" src="${BASE}logo.webp" alt="" width="36" height="36"><span>Raptor Rips</span>
       </a>
     </header>
-    <main class="screen">${content}</main>
+    <main class="screen page-${view.page}">${content}</main>
     <nav class="bottom-nav" aria-label="Navegação principal">
       <button data-tab="calendar" class="${active === 'calendar' ? 'active' : ''}">${icon('calendar')}<span>Calendário</span></button>
       <button data-tab="notes" class="${active === 'notes' ? 'active' : ''}">${icon('notes')}<span>Notas</span></button>
@@ -904,7 +904,7 @@ function renderBinders() {
   })
   $app.querySelectorAll('.binder').forEach(el => {
     el.onclick = () => {
-      view = { ...view, page: 'binder', binderId: el.dataset.id, pageIdx: 0, edit: false, panel: false, q: '', results: [], msg: '' }
+      Object.assign(view, { page: 'binder', binderId: el.dataset.id, pageIdx: 0, edit: false, panel: false, q: '', results: [], msg: '' })
       render()
     }
   })
