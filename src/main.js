@@ -578,6 +578,7 @@ function addItem(b, item) {
 
 /* ---------- ecrãs ---------- */
 function render() {
+  document.body.classList.remove('nt-lock')
   if (view.page === 'calendar') return renderCalendar()
   if (view.page === 'notes') return renderNotes()
   if (view.page === 'binders') return renderBinders()
@@ -647,6 +648,7 @@ function renderDashboard() {
         <article class="dashboard-note ${note.done ? 'is-done' : ''}">
           <strong>${esc(noteTitle(note))}</strong>
           ${noteBody(note) ? `<div class="note-rich-content">${noteBodyMarkup(note)}</div>` : ''}
+          ${checklistHtml(note, 'data-ditem', 4)}
           <small>${esc(note.category || 'Pessoal')}${noteDateLabel(note)}</small>
         </article>`).join('')}</div>` : '<p class="empty-inline">As notas que criares aparecem aqui.</p>'}
       <button class="button-secondary notes-create-button" id="createNote">Criar nota</button>
@@ -661,105 +663,199 @@ function renderDashboard() {
   on('addFirstEvent', 'click', () => { view.page = 'calendar'; render() })
   on('openBinders', 'click', () => { view.page = 'binders'; render() })
   on('openNotes', 'click', () => { view.page = 'notes'; render() })
-  on('createNote', 'click', () => { view.page = 'notes'; render() })
+  on('createNote', 'click', () => { view.page = 'notes'; view.noteEditId = 'new'; render() })
+  $app.querySelectorAll('input[data-ditem]').forEach(box => box.addEventListener('change', () => { toggleNoteItem(box.dataset.ditem); renderDashboard() }))
 }
 
+const noteItems = note => (Array.isArray(note.items) ? note.items : [])
+const noteText = note => `${noteTitle(note)} ${String(noteBody(note)).replace(/<[^>]*>/g, ' ')} ${noteItems(note).map(i => i.text).join(' ')}`.toLowerCase()
+function checklistHtml(note, attr = 'data-item', limit = 0) {
+  const items = noteItems(note)
+  if (!items.length) return ''
+  const done = items.filter(i => i.done).length
+  const shown = limit ? items.slice(0, limit) : items
+  return `<div class="nt-checklist">
+    <div class="nt-progress-row"><span class="nt-progress"><i style="width:${Math.round(done / items.length * 100)}%"></i></span><small>${done}/${items.length}</small></div>
+    <ul>${shown.map(it => `<li class="${it.done ? 'done' : ''}"><label><input type="checkbox" ${attr}="${note.id}:${it.id}" ${it.done ? 'checked' : ''}><span class="nt-box" aria-hidden="true"></span><span class="nt-text">${esc(it.text)}</span></label></li>`).join('')}</ul>
+    ${limit && items.length > limit ? `<small class="nt-more">+${items.length - limit} itens</small>` : ''}
+    ${!limit && done ? `<button class="text-button" data-clear-done="${note.id}">Limpar feitos</button>` : ''}
+  </div>`
+}
+function toggleNoteItem(ref) {
+  const [noteId, itemId] = ref.split(':')
+  const note = data.notes.find(n => n.id === noteId)
+  const item = note && noteItems(note).find(i => i.id === itemId)
+  if (item) { item.done = !item.done; save() }
+}
 function renderNotes() {
-  const activeNotes = data.notes.filter(note => !note.done)
-  const editing = data.notes.find(note => note.id === view.noteEditId) || null
-  if (!editing) view.noteEditId = null
-  const catOptions = categoryOptions(editing ? editing.category : data.categories[0]) +
+  const editId = view.noteEditId || null
+  const editing = editId && editId !== 'new' && editId !== 'newlist' ? data.notes.find(n => n.id === editId) || null : null
+  if (editId && !editing && editId !== 'new' && editId !== 'newlist') view.noteEditId = null
+  const filter = view.noteFilter || 'all'
+  const matches = n => {
+    const q = (view.noteQuery || '').trim().toLowerCase() // lido de cada vez, para a pesquisa ao escrever
+    return (filter === 'all' || n.category === filter) && (!q || noteText(n).includes(q))
+  }
+  const card = note => `
+    <article class="nt-card ${note.done ? 'is-done' : ''}">
+      <div class="saved-note-heading">
+        <button class="note-check ${note.done ? 'is-done' : ''}" data-note-toggle="${note.id}" aria-label="${note.done ? 'Reabrir nota' : 'Concluir nota'}" aria-pressed="${Boolean(note.done)}">${note.done ? '✓' : ''}</button>
+        <h3>${esc(noteTitle(note))}</h3>
+        <button class="note-edit" data-note-edit="${note.id}" aria-label="Editar nota" title="Editar">✎</button>
+        <button class="note-delete" data-note-delete="${note.id}" aria-label="Apagar nota" title="Apagar">×</button>
+      </div>
+      ${noteBody(note) ? `<div class="saved-note-body note-rich-content">${noteBodyMarkup(note)}</div>` : ''}
+      ${checklistHtml(note)}
+      <small class="nt-meta">${esc(note.category || 'Pessoal')}${noteDateLabel(note)}</small>
+    </article>`
+  const boardHtml = () => {
+    const mine = data.notes.filter(matches)
+    const active = mine.filter(n => !n.done), done = mine.filter(n => n.done)
+    if (!data.notes.length) return '<div class="empty-card"><strong>Ainda não tens notas</strong><p>Cria uma nota de texto ou uma lista de tarefas.</p></div>'
+    if (!mine.length) return '<p class="empty-inline">Nenhuma nota encontrada.</p>'
+    return `${active.length ? `<div class="nt-board">${active.map(card).join('')}</div>` : '<p class="empty-inline">Sem notas por fazer. 🎉</p>'}
+      ${done.length ? `<details class="nt-done"><summary>Concluídas (${done.length})</summary><div class="nt-board">${done.map(card).join('')}</div></details>` : ''}`
+  }
+  const cats = ['all', ...data.categories]
+  const catOptions = categoryOptions(editing ? editing.category : (filter !== 'all' ? filter : data.categories[0])) +
     (editing && editing.category && !data.categories.includes(editing.category) ? `<option value="${esc(editing.category)}" selected>${esc(editing.category)}</option>` : '')
-  const content = `
-    <section class="page-intro"><p class="eyebrow">As tuas ideias</p><h1>Notas</h1><p>Guarda o que quiseres, com o detalhe que precisares.</p></section>
-    <section class="section-block">
-      <div class="section-heading"><div><p class="eyebrow">${editing ? 'A editar' : 'Nova nota'}</p><h2>${editing ? 'Altera a tua nota' : 'Escreve uma ideia'}</h2></div></div>
-      <form class="note-form" id="newNote">
-        <label for="noteTitle">Título</label>
-        <input id="noteTitle" name="title" placeholder="Dá um título à nota" value="${esc(editing ? noteTitle(editing) : '')}" required>
-        <label for="noteBody">Texto</label>
-        <div class="note-toolbar" role="toolbar" aria-label="Formatação do texto">
-          <button type="button" data-note-command="bold" aria-label="Negrito" title="Negrito"><strong>N</strong></button>
-          <button type="button" data-note-command="italic" aria-label="Itálico" title="Itálico"><em>I</em></button>
-          <button type="button" data-note-command="underline" aria-label="Sublinhado" title="Sublinhado"><u>S</u></button>
-          <span class="note-toolbar-divider" aria-hidden="true"></span>
-          <button type="button" data-note-command="insertUnorderedList" aria-label="Lista com pontos" title="Lista com pontos">• Lista</button>
-          <button type="button" data-note-command="insertOrderedList" aria-label="Lista numerada" title="Lista numerada">1. Lista</button>
-          <span class="note-toolbar-divider" aria-hidden="true"></span>
-          <button type="button" data-note-command="justifyCenter" aria-label="Centrar texto" title="Centrar texto">≡</button>
-        </div>
-        <div id="noteBody" class="note-editor" contenteditable="true" role="textbox" aria-label="Texto da nota" aria-multiline="true" data-placeholder="Escreve aqui a tua nota, sem limite de tamanho…"></div>
-        <div class="note-form-options">
-          <label for="noteCategory">Categoria</label>
-          <select id="noteCategory" name="category" aria-label="Categoria da nota">${catOptions}</select>
-          <label class="note-date-field" for="noteDueDate"><span>Data (opcional)</span><input id="noteDueDate" name="dueDate" type="date" value="${esc(editing ? editing.dueDate || '' : '')}" aria-label="Data de lembrete (opcional)"></label>
-        </div>
-        <button class="primary-button" type="submit">${editing ? 'Guardar alterações <span>✓</span>' : 'Guardar nota <span>+</span>'}</button>
-        ${editing ? '<button class="button-secondary" type="button" id="cancelNoteEdit">Cancelar</button>' : ''}
-      </form>
-    </section>
-    <section class="section-block">
-      <div class="section-heading"><div><p class="eyebrow">Tudo guardado</p><h2>As minhas notas</h2></div><span class="count-badge">${activeNotes.length}</span></div>
-      ${data.notes.length ? `<div class="saved-notes">${data.notes.map(note => `
-        <article class="saved-note ${note.done ? 'is-done' : ''} ${editing && editing.id === note.id ? 'is-editing' : ''}">
-          <div class="saved-note-heading">
-            <button class="note-check ${note.done ? 'is-done' : ''}" data-note-toggle="${note.id}" aria-label="${note.done ? 'Reabrir nota' : 'Concluir nota'}" aria-pressed="${Boolean(note.done)}">${note.done ? '✓' : ''}</button>
-            <h3>${esc(noteTitle(note))}</h3>
-            <button class="note-edit" data-note-edit="${note.id}" aria-label="Editar nota" title="Editar">✎</button>
-            <button class="note-delete" data-note-delete="${note.id}" aria-label="Apagar nota">×</button>
+  const modal = !editId ? '' : `
+    <div class="nt-modal" id="ntModal" role="dialog" aria-modal="true" aria-label="${editing ? 'Editar nota' : 'Nova nota'}">
+      <div class="nt-sheet">
+        <div class="nt-sheet-head"><h2>${editing ? 'Editar nota' : editId === 'newlist' ? 'Nova lista' : 'Nova nota'}</h2><button type="button" id="ntClose" class="nt-close" aria-label="Fechar">✕</button></div>
+        <form class="note-form" id="newNote">
+          <label for="noteTitle">Título</label>
+          <input id="noteTitle" name="title" placeholder="Dá um título à nota" value="${esc(editing ? noteTitle(editing) : '')}" required>
+          <label for="noteBody">Texto <small>(opcional)</small></label>
+          <div class="note-toolbar" role="toolbar" aria-label="Formatação do texto">
+            <button type="button" data-note-command="bold" aria-label="Negrito" title="Negrito"><strong>N</strong></button>
+            <button type="button" data-note-command="italic" aria-label="Itálico" title="Itálico"><em>I</em></button>
+            <button type="button" data-note-command="underline" aria-label="Sublinhado" title="Sublinhado"><u>S</u></button>
+            <span class="note-toolbar-divider" aria-hidden="true"></span>
+            <button type="button" data-note-command="insertUnorderedList" aria-label="Lista com pontos" title="Lista com pontos">• Lista</button>
+            <button type="button" data-note-command="insertOrderedList" aria-label="Lista numerada" title="Lista numerada">1. Lista</button>
+            <span class="note-toolbar-divider" aria-hidden="true"></span>
+            <button type="button" data-note-command="justifyCenter" aria-label="Centrar texto" title="Centrar texto">≡</button>
           </div>
-          ${noteBody(note) ? `<div class="saved-note-body note-rich-content">${noteBodyMarkup(note)}</div>` : ''}
-          <small>${esc(note.category || 'Pessoal')}${noteDateLabel(note)}</small>
-        </article>`).join('')}</div>` : '<p class="empty-inline">Ainda não criaste nenhuma nota.</p>'}
-    </section>`
+          <div id="noteBody" class="note-editor" contenteditable="true" role="textbox" aria-label="Texto da nota" aria-multiline="true" data-placeholder="Escreve aqui a tua nota, sem limite de tamanho…"></div>
+          <div class="check-editor">
+            <label for="newItemText">Lista de tarefas <small>(opcional, com caixas para marcar)</small></label>
+            <ul id="draftItems" class="draft-items"></ul>
+            <div class="check-add"><input id="newItemText" type="text" placeholder="Novo item e Enter (podes colar várias linhas)" autocomplete="off"><button type="button" id="addItem" class="button-secondary" aria-label="Adicionar item">+</button></div>
+          </div>
+          <div class="note-form-options">
+            <label for="noteCategory">Categoria</label>
+            <select id="noteCategory" name="category" aria-label="Categoria da nota">${catOptions}</select>
+            <label class="note-date-field" for="noteDueDate"><span>Data (opcional)</span><input id="noteDueDate" name="dueDate" type="date" value="${esc(editing ? editing.dueDate || '' : '')}" aria-label="Data de lembrete (opcional)"></label>
+          </div>
+          <button class="primary-button" type="submit">${editing ? 'Guardar alterações <span>✓</span>' : 'Guardar nota <span>+</span>'}</button>
+          <button class="button-secondary" type="button" id="cancelNoteEdit">Cancelar</button>
+        </form>
+      </div>
+    </div>`
+  const content = `
+    <section class="page-intro"><p class="eyebrow">As tuas ideias</p><h1>Notas</h1><p>Texto, listas de tarefas e tudo o que não queres esquecer.</p></section>
+    <div class="nt-toolbar">
+      <input id="noteSearch" class="nt-search" type="search" placeholder="Pesquisar notas…" value="${esc(view.noteQuery || '')}" autocomplete="off">
+      <button class="primary-button" id="newNoteBtn" type="button">+ Nova nota</button>
+      <button class="button-secondary" id="newListBtn" type="button">☑ Nova lista</button>
+    </div>
+    <div class="nt-chips">${cats.map(c => `<button type="button" class="nt-chip ${filter === c ? 'on' : ''}" data-notecat="${esc(c)}">${c === 'all' ? 'Todas' : esc(c)}</button>`).join('')}</div>
+    <div id="ntBoard">${boardHtml()}</div>
+    ${modal}`
   renderShell(content, 'notes')
+  document.body.classList.toggle('nt-lock', Boolean(editId))
 
+  const closeEditor = () => { view.noteEditId = null; renderNotes() }
+  const paintBoard = () => { document.getElementById('ntBoard').innerHTML = boardHtml() }
+  on('noteSearch', 'input', e => { view.noteQuery = e.target.value; paintBoard() })
+  on('newNoteBtn', 'click', () => { view.noteEditId = 'new'; renderNotes() })
+  on('newListBtn', 'click', () => { view.noteEditId = 'newlist'; renderNotes() })
+  $app.querySelectorAll('[data-notecat]').forEach(b => b.addEventListener('click', () => { view.noteFilter = b.dataset.notecat; renderNotes() }))
+  on('ntBoard', 'click', e => {
+    const t = e.target.closest('[data-note-toggle], [data-note-edit], [data-note-delete], [data-clear-done]')
+    if (!t) return
+    if (t.dataset.noteToggle) { const n = data.notes.find(x => x.id === t.dataset.noteToggle); if (n) n.done = !n.done; save(); return paintBoard() }
+    if (t.dataset.noteEdit) { view.noteEditId = t.dataset.noteEdit; return renderNotes() }
+    if (t.dataset.noteDelete) {
+      if (!confirm('Apagar esta nota?')) return
+      data.notes = data.notes.filter(x => x.id !== t.dataset.noteDelete); save(); return paintBoard()
+    }
+    if (t.dataset.clearDone) { const n = data.notes.find(x => x.id === t.dataset.clearDone); if (n) { n.items = noteItems(n).filter(i => !i.done); save(); paintBoard() } }
+  })
+  on('ntBoard', 'change', e => {
+    const box = e.target.closest('input[data-item]')
+    if (box) { toggleNoteItem(box.dataset.item); paintBoard() }
+  })
+  if (!editId) return
+
+  // ---- editor (janela) ----
+  const editor = document.getElementById('noteBody')
+  if (editing) editor.innerHTML = noteBodyMarkup(editing)
+  let draft = noteItems(editing || {}).map(i => ({ ...i }))
+  const paintDraft = () => {
+    document.getElementById('draftItems').innerHTML = draft.map((it, i) => `<li data-i="${i}">
+      <input type="checkbox" class="draft-done" ${it.done ? 'checked' : ''} aria-label="Feito">
+      <input type="text" class="draft-text" value="${esc(it.text)}" aria-label="Texto do item">
+      <button type="button" data-up aria-label="Subir" ${i === 0 ? 'disabled' : ''}>↑</button>
+      <button type="button" data-down aria-label="Descer" ${i === draft.length - 1 ? 'disabled' : ''}>↓</button>
+      <button type="button" data-rm aria-label="Remover">✕</button></li>`).join('')
+  }
+  const addItems = text => {
+    const lines = String(text).split(/\r?\n/).map(l => l.replace(/^\s*(?:[-*•]|\d+[.)]|\[[ xX]?\])\s*/, '').trim()).filter(Boolean)
+    if (!lines.length) return
+    lines.forEach(t => draft.push({ id: uid(), text: t, done: false }))
+    paintDraft()
+  }
+  paintDraft()
+  const newItem = document.getElementById('newItemText')
+  newItem.addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); addItems(newItem.value); newItem.value = ''; newItem.focus() } })
+  newItem.addEventListener('paste', e => {
+    const text = e.clipboardData ? e.clipboardData.getData('text/plain') : ''
+    if (/\r?\n/.test(text.trim())) { e.preventDefault(); addItems(text) }
+  })
+  on('addItem', 'click', () => { addItems(newItem.value); newItem.value = ''; newItem.focus() })
+  const list = document.getElementById('draftItems')
+  list.addEventListener('input', e => { const li = e.target.closest('li'); if (li && e.target.classList.contains('draft-text')) draft[Number(li.dataset.i)].text = e.target.value })
+  list.addEventListener('change', e => { const li = e.target.closest('li'); if (li && e.target.classList.contains('draft-done')) draft[Number(li.dataset.i)].done = e.target.checked })
+  list.addEventListener('click', e => {
+    const li = e.target.closest('li'), b = e.target.closest('button'); if (!li || !b) return
+    const i = Number(li.dataset.i)
+    if (b.hasAttribute('data-rm')) draft.splice(i, 1)
+    else if (b.hasAttribute('data-up') && i > 0) [draft[i - 1], draft[i]] = [draft[i], draft[i - 1]]
+    else if (b.hasAttribute('data-down') && i < draft.length - 1) [draft[i + 1], draft[i]] = [draft[i], draft[i + 1]]
+    paintDraft()
+  })
   on('newNote', 'submit', e => {
     e.preventDefault()
     const form = new FormData(e.target)
     const title = String(form.get('title')).trim()
     if (!title) return
-    const body = sanitizeNoteHtml(document.getElementById('noteBody')?.innerHTML || '')
+    if (newItem.value.trim()) addItems(newItem.value) // item que ficou escrito e sem Enter
+    const body = sanitizeNoteHtml(editor.innerHTML || '')
+    const items = draft.map(i => ({ id: i.id, text: String(i.text).trim(), done: Boolean(i.done) })).filter(i => i.text)
+    const fields = { title, body, bodyFormat: 'html', category: String(form.get('category')), dueDate: String(form.get('dueDate') || '') }
     if (editing) {
-      Object.assign(editing, { title, body, bodyFormat: 'html', category: String(form.get('category')), dueDate: String(form.get('dueDate') || '') })
-      delete editing.text
-      view.noteEditId = null
+      Object.assign(editing, fields); delete editing.text
+      if (items.length) editing.items = items; else delete editing.items
     } else {
-      data.notes.unshift({ id: uid(), title, body, bodyFormat: 'html', category: String(form.get('category')), dueDate: String(form.get('dueDate') || ''), done: false })
+      data.notes.unshift({ id: uid(), ...fields, done: false, ...(items.length ? { items } : {}) })
     }
-    save(); renderNotes()
-    if (editing) window.scrollTo({ top: 0, behavior: 'smooth' })
+    save(); view.noteEditId = null; renderNotes()
   })
-  const editor = document.getElementById('noteBody')
-  if (editing && editor) editor.innerHTML = noteBodyMarkup(editing)
-  on('cancelNoteEdit', 'click', () => { view.noteEditId = null; renderNotes() })
-  $app.querySelectorAll('[data-note-edit]').forEach(button => button.addEventListener('click', () => {
-    view.noteEditId = button.dataset.noteEdit
-    renderNotes()
-    window.scrollTo({ top: 0, behavior: 'smooth' })
-    document.getElementById('noteTitle')?.focus({ preventScroll: true })
-  }))
-  editor?.addEventListener('paste', event => {
+  on('ntClose', 'click', closeEditor)
+  on('cancelNoteEdit', 'click', closeEditor)
+  document.getElementById('ntModal').addEventListener('mousedown', e => { if (e.target.id === 'ntModal') closeEditor() })
+  document.getElementById('ntModal').addEventListener('keydown', e => { if (e.key === 'Escape') closeEditor() })
+  editor.addEventListener('paste', event => {
     event.preventDefault()
     document.execCommand('insertText', false, event.clipboardData?.getData('text/plain') || '')
   })
   $app.querySelectorAll('[data-note-command]').forEach(button => {
     button.addEventListener('mousedown', event => event.preventDefault())
-    button.addEventListener('click', () => {
-      editor?.focus()
-      document.execCommand(button.dataset.noteCommand)
-    })
+    button.addEventListener('click', () => { editor.focus(); document.execCommand(button.dataset.noteCommand) })
   })
-  $app.querySelectorAll('[data-note-toggle]').forEach(button => button.addEventListener('click', () => {
-    const note = data.notes.find(item => item.id === button.dataset.noteToggle)
-    if (note) note.done = !note.done
-    save(); renderNotes()
-  }))
-  $app.querySelectorAll('[data-note-delete]').forEach(button => button.addEventListener('click', () => {
-    data.notes = data.notes.filter(item => item.id !== button.dataset.noteDelete)
-    if (view.noteEditId === button.dataset.noteDelete) view.noteEditId = null
-    save(); renderNotes()
-  }))
+  setTimeout(() => (editId === 'newlist' ? newItem : document.getElementById('noteTitle')).focus({ preventScroll: true }), 40)
 }
 
 function renderCalendar() {

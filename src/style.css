@@ -550,10 +550,6 @@ label.button-secondary { display: inline-block; text-align: center; cursor: poin
   .page-calendar > .page-intro { grid-column: 1 / -1; }
   .page-calendar > .calendar-card { grid-column: 1; grid-row: 2 / span 2; }
   .page-calendar > .section-block { grid-column: 2; }
-  /* notas: formulário fixo à esquerda, lista à direita */
-  .page-notes { display: grid; grid-template-columns: 400px minmax(0, 1fr); column-gap: 40px; align-items: start; }
-  .page-notes > .page-intro { grid-column: 1 / -1; }
-  .page-notes > section:nth-of-type(2) { position: sticky; top: 24px; }
   /* menu Pokémon: três cartões grandes */
   .page-pokemon .hub-list { grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 18px; }
   .hub-card { flex-direction: column; align-items: flex-start; gap: 18px; min-height: 200px; padding: 24px; }
@@ -583,3 +579,57 @@ label.button-secondary { display: inline-block; text-align: center; cursor: poin
   body:has(main.login) { padding-left: 0; }
   .login { max-width: 440px; padding-top: 8vh; }
 }
+
+/* =========================================================
+   NOTAS: quadro, listas de tarefas e janela de edição
+   ========================================================= */
+.page-notes, .page-dashboard { --nt-card: #fff; --nt-border: #e6e6e8; --nt-muted: #7e8085; --nt-text: #1c1c1f; --nt-chip: #efeff1; --nt-accent: #ee6c2d; --nt-box: #c4c5ca; }
+:root[data-theme="dark"] .page-notes, :root[data-theme="dark"] .page-dashboard { --nt-card: #1a1a1c; --nt-border: #2a2b2e; --nt-muted: #9a9ca3; --nt-text: #f4f4f5; --nt-chip: #25262a; --nt-box: #4a4b50; }
+.nt-lock { overflow: hidden; }
+.nt-toolbar { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin: 6px 0 12px; }
+.nt-search { flex: 1 1 200px; min-width: 0; padding: 13px 14px; border-radius: 14px; border: 1px solid var(--nt-border); background: var(--nt-card); color: var(--nt-text); font: inherit; }
+.nt-toolbar .primary-button { width: auto; padding-inline: 20px; }
+.nt-chips { display: flex; flex-wrap: wrap; gap: 8px; margin: 4px 0 16px; }
+.nt-chip { padding: 7px 14px; border-radius: 999px; border: 1px solid var(--nt-border); background: var(--nt-chip); color: var(--nt-text); font: inherit; font-size: 13px; font-weight: 700; cursor: pointer; transition: background .15s, border-color .15s; }
+.nt-chip.on { background: var(--nt-accent); border-color: var(--nt-accent); color: #fff; }
+.nt-board { columns: 1; column-gap: 14px; }
+@media (min-width: 640px) { .nt-board { columns: 2; } }
+@media (min-width: 1100px) { .nt-board { columns: 3; } }
+.nt-card { break-inside: avoid; display: grid; gap: 10px; margin: 0 0 14px; padding: 16px; background: var(--nt-card); border: 1px solid var(--nt-border); border-radius: 18px; color: var(--nt-text); }
+.nt-card.is-done { opacity: .6; }
+.nt-card h3 { flex: 1; margin: 0; min-width: 0; font-size: 16px; overflow-wrap: anywhere; }
+.nt-meta, .nt-more { color: var(--nt-muted); }
+.nt-done { margin-top: 12px; }
+.nt-done summary { padding: 8px 2px; color: var(--nt-muted); font-weight: 800; cursor: pointer; }
+.nt-checklist { display: grid; gap: 6px; }
+.nt-checklist ul { display: grid; gap: 2px; margin: 0; padding: 0; list-style: none; }
+.nt-checklist label { position: relative; display: flex; align-items: flex-start; gap: 10px; padding: 6px 2px; cursor: pointer; }
+.nt-checklist input { position: absolute; opacity: 0; pointer-events: none; }
+.nt-box { flex: none; display: grid; place-items: center; width: 22px; height: 22px; border-radius: 7px; border: 2px solid var(--nt-box); transition: background .15s, border-color .15s; }
+.nt-checklist input:checked + .nt-box { background: var(--nt-accent); border-color: var(--nt-accent); }
+.nt-checklist input:checked + .nt-box::after { content: '✓'; color: #fff; font-size: 14px; font-weight: 900; line-height: 1; }
+.nt-checklist input:focus-visible + .nt-box { outline: 2px solid var(--nt-accent); outline-offset: 2px; }
+.nt-checklist li.done .nt-text { color: var(--nt-muted); text-decoration: line-through; }
+.nt-text { padding-top: 1px; overflow-wrap: anywhere; }
+.nt-progress-row { display: flex; align-items: center; gap: 10px; }
+.nt-progress { flex: 1; height: 6px; border-radius: 99px; background: var(--nt-chip); overflow: hidden; }
+.nt-progress i { display: block; height: 100%; background: linear-gradient(90deg, #d9482b, #ee7a35); }
+/* janela de edição */
+.nt-modal { position: fixed; inset: 0; z-index: 30; display: flex; align-items: flex-end; justify-content: center; background: rgba(0, 0, 0, .55); }
+.nt-sheet { width: 100%; max-width: 640px; max-height: 94vh; overflow-y: auto; padding: 18px 18px 28px; background: var(--nt-card); color: var(--nt-text); border: 1px solid var(--nt-border); border-radius: 22px 22px 0 0; }
+@media (min-width: 700px) { .nt-modal { align-items: center; } .nt-sheet { max-height: 90vh; border-radius: 22px; } }
+.nt-sheet-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 6px; }
+.nt-sheet-head h2 { margin: 0; font-size: 22px; }
+.nt-close { width: 36px; height: 36px; border: 0; border-radius: 50%; background: var(--nt-chip); color: var(--nt-text); font-size: 15px; cursor: pointer; }
+.nt-sheet .note-form { margin: 0; padding: 0; border: 0; background: transparent; box-shadow: none; }
+.nt-sheet label small { color: var(--nt-muted); font-weight: 600; }
+.check-editor { display: grid; gap: 8px; margin-top: 10px; }
+.draft-items { display: grid; gap: 6px; margin: 0; padding: 0; list-style: none; }
+.draft-items li { display: grid; grid-template-columns: auto minmax(0, 1fr) auto auto auto; gap: 6px; align-items: center; }
+.draft-items .draft-done { width: 20px; height: 20px; accent-color: var(--nt-accent); }
+.draft-items .draft-text, .check-add input { min-width: 0; padding: 10px 12px; border-radius: 10px; border: 1px solid var(--nt-border); background: var(--nt-card); color: var(--nt-text); font: inherit; }
+.draft-items button { width: 34px; height: 34px; padding: 0; border: 0; border-radius: 9px; background: var(--nt-chip); color: var(--nt-text); cursor: pointer; }
+.draft-items button:disabled { opacity: .3; cursor: default; }
+.check-add { display: flex; gap: 8px; }
+.check-add input { flex: 1; }
+.check-add .button-secondary { padding: 0 18px; font-size: 20px; }
